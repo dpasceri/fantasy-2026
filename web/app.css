@@ -1,30 +1,68 @@
-/* The front page: dark, plain text, one column. The cheat sheet itself (in the iframe) uses sheet.css. */
-:root { color-scheme: dark; --fg: #ddd; --bg: #111; --dim: #888; --line: #333; --bad: #f85149; }
+/* The front page: dark, one narrow column, set in the same type as the sheet (serif title, sans text, mono figures).
+   The cheat sheet itself (in the iframe) uses sheet.css. */
+:root {
+  color-scheme: dark;
+  --bg: #0f0f10; --panel: #161618; --ink: #ece9e2; --ink-2: #bcb8b0; --muted: #8b877f; --faint: #5f5c57;
+  --rule: #2e2e31; --field: #3a3a3e; --bad: #ff6b61;
+  --serif: ui-serif, "New York", "Iowan Old Style", Charter, "Palatino Linotype", Palatino, P052, Georgia, "Noto Serif", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", "Ubuntu Sans", Ubuntu, Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Ubuntu Sans Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+}
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-main { max-width: 640px; padding: 48px 16px 24px; }
-h1 { font: inherit; font-weight: bold; margin: 0; }
-p { margin: 0 0 24px; }
-a { color: inherit; }
-.dim, #league-facts, #progress-label { color: var(--dim); }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 1240px; margin: 0 auto; padding: 56px 16px 40px; }
+main > * { max-width: 560px; }
+@media (min-width: 720px) { main { padding: 88px 32px 56px; } }
+a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 2px; }
+a:hover { text-decoration-color: var(--ink-2); }
 
-form, #team-box { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
-input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--fg); border-radius: 0;
-  padding: 4px 8px; min-height: 34px; }
-input { flex: 1 1 200px; min-width: 0; }
-select { flex: 1 1 200px; min-width: 0; }
-button { cursor: pointer; padding: 4px 16px; }
-button:disabled { color: var(--dim); border-color: var(--line); cursor: default; }
-input:focus-visible, select:focus-visible, button:focus-visible { outline: 1px solid var(--fg); outline-offset: 2px; }
-#team-box p { flex-basis: 100%; margin: 0; }
-progress { width: 120px; height: 8px; vertical-align: middle; accent-color: var(--fg); }
+header { margin: 0 0 40px; }
+h1 { font: 600 clamp(36px, 7vw, 48px)/1 var(--serif); letter-spacing: -.015em; margin: 0 0 14px; }
+.lede { margin: 0; color: var(--ink-2); }
+
+.lbl { display: block; margin: 0 0 6px; font: 600 10.5px/1.4 var(--sans); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+form, #team-box { margin: 0 0 20px; }
+.row { display: flex; gap: 8px; }
+input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--field); border-radius: 3px;
+  padding: 6px 10px; min-height: 40px; }
+input, select { flex: 1 1 auto; min-width: 0; }
+input { font-family: var(--mono); font-size: 14px; }
+input::placeholder { color: var(--faint); font-family: var(--sans); font-size: 15px; }
+select { -webkit-appearance: none; appearance: none; padding-right: 32px; cursor: pointer;
+  background: linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 19px) 50% / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 14px) 50% / 5px 5px no-repeat, var(--bg); }
+select option { background: var(--panel); }
+input:hover, select:hover { border-color: var(--muted); }
+button { flex: 0 0 auto; cursor: pointer; padding: 6px 18px; font-weight: 600; }
+button:hover { border-color: var(--ink-2); }
+button.go { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+button.go:hover { background: #fff; }
+button:disabled, button.go:disabled { background: var(--bg); color: var(--faint); border-color: var(--rule); cursor: default; }
+:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
+
+#league-facts { margin: 8px 0 0; font: 12.5px/1.5 var(--mono); color: var(--muted); }
+#progress { margin: 18px 0 0; display: grid; gap: 8px; }
+progress { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 2px; border: 0; background: var(--rule); color: var(--ink); }
+progress::-webkit-progress-bar { background: var(--rule); }
+progress::-webkit-progress-value { background: var(--ink); transition: width .2s; }
+progress::-moz-progress-bar { background: var(--ink); }
+#progress-label { font: 12.5px/1.5 var(--mono); color: var(--muted); }
 
 #status:empty { display: none; }
-#status { margin: 0 0 24px; }
+#status { margin: -8px 0 24px; font-size: 14px; color: var(--ink-2); }
 #status.bad { color: var(--bad); }
-#status ul { margin: 4px 0 0; padding-left: 2ch; }
+#status ul { margin: 6px 0 0; padding-left: 2ch; }
 
-#sheet-box { border-top: 1px solid var(--line); }
-#sheet-box p { padding: 8px 16px; margin: 0; }
-#sheet { display: block; width: 100%; height: 80vh; border: 0; }
+.fine { margin: 40px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
+.fine a { margin-left: 6px; }
+
+/* The sheet takes the whole viewport once it's there and scrolls inside, so its section rail stays pinned. */
+#sheet-box { display: flex; flex-direction: column; height: 100vh; height: 100dvh; border-top: 1px solid var(--rule); }
+.sheet-bar { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; height: 36px; padding: 0 16px;
+  border-bottom: 1px solid var(--rule); font-size: 13px; }
+#sheet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--muted); }
+#download { flex: 0 0 auto; }
+#download::after { content: " ↓"; }
+#sheet { display: block; flex: 1 1 auto; width: 100%; min-height: 0; border: 0; }
+@media (min-width: 720px) { .sheet-bar { padding: 0 max(32px, calc((100% - 1176px) / 2)); } } /* lines up with main and the sheet */

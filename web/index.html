@@ -9,28 +9,35 @@
 </head>
 <body>
 <main>
-<h1>chop sheet</h1>
-<p>monte carlo sims for sleeper guillotine leagues. who gets chopped, what to start, what to bid.</p>
+<header>
+  <h1>chop sheet</h1>
+  <p class="lede">Monte Carlo sims for Sleeper guillotine leagues. Who gets chopped, what to start, what to bid.</p>
+</header>
 
 <form id="league-form">
-  <input id="league-id" name="league" inputmode="numeric" autocomplete="off" placeholder="sleeper league id or url" aria-label="Sleeper league ID or URL" required>
-  <button type="submit">load</button>
+  <label class="lbl" for="league-id">League</label>
+  <div class="row">
+    <input id="league-id" name="league" inputmode="numeric" autocomplete="off" placeholder="Sleeper league ID or URL" required>
+    <button type="submit">Load</button>
+  </div>
 </form>
 <div id="status" role="status" aria-live="polite"></div>
 
 <div id="team-box" hidden>
-  <select id="team" aria-label="Your team"></select>
-  <button id="run" type="button" disabled>run</button>
+  <label class="lbl" for="team">Team</label>
+  <div class="row">
+    <select id="team"></select>
+    <button id="run" class="go" type="button" disabled>Run</button>
+  </div>
   <p id="league-facts"></p>
-  <p id="progress" hidden><progress id="progress-bar" max="1" value="0"></progress> <span id="progress-label"></span></p>
+  <div id="progress" hidden><progress id="progress-bar" max="1" value="0"></progress><span id="progress-label"></span></div>
 </div>
 
-<p class="dim">guillotine + faab leagues only. no k/def, superflex, idp or best ball.<br>
-<a href="https://github.com/dpasceri/fantasy-2026">source</a></p>
+<p class="fine">Guillotine + FAAB leagues only. No K/DEF, superflex, IDP or best ball. <a href="https://github.com/dpasceri/fantasy-2026">Source</a></p>
 </main>
 
 <section id="sheet-box" hidden>
-  <p><a id="download" href="#">download sheet</a></p>
+  <div class="sheet-bar"><span id="sheet-name"></span><a id="download" href="#">Download</a></div>
   <iframe id="sheet" title="Chop sheet"></iframe>
 </section>
 <script type="module" src="src/app.js"></script>
