@@ -108,8 +108,5 @@ export function lstsq(X, y) {
   return solveSPD(A, b);
 }
 
-/** Python's round(): half to even. */
-export function pyRound(x, nd = 0) {
-  const m = 10 ** nd, v = x * m, r = Math.round(v);
-  return (Math.abs(v % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r) / m;
-}
+// Python's round(): correctly rounded on the exact binary value, ties to even.
+export { pyRound } from "./pyfmt.js";

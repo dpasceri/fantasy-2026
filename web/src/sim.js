@@ -18,8 +18,8 @@ const INJ_MEAN_WEEKS = { QB: 1.45, other: 2.07 };
 const INJ_LONG_WEEKS = 99;
 export const CHUNK = 8000;
 
-// ndtr(z) * (Q - 1) by table lookup on [-8.5, 8.5] in steps of 1/256 (linear interpolation error < 2e-7,
-// far finer than the Q-level quantile tables it indexes)
+// ndtr(z) * (Q - 1) by table lookup on [-8.5, 8.5] in steps of 1/256 (linear interpolation error < 5e-7 in
+// probability, far finer than the Q-level quantile tables it indexes)
 const NT_LO = -8.5, NT_STEP = 256, NT = Float64Array.from({ length: 17 * NT_STEP + 2 }, (_, i) => ndtr(NT_LO + i / NT_STEP) * (Q - 1));
 const NT_MAX = NT.length - 2;
 function uOf(z) {

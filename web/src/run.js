@@ -132,7 +132,7 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
   };
 
   stage("Fitting the player and bid models");
-  const grid = [...new Set(BID_GRID.map((b) => Math.round((b * lg.budget) / 200)))].sort((a, b) => a - b);
+  const grid = [...new Set(BID_GRID.map((b) => pyRound((b * lg.budget) / 200)))].sort((a, b) => a - b);
   const { model, report: modelReport } = fit(lg);
   const pm = new PlayerModel(model);
   const bm = new BidModel(lg);
@@ -253,8 +253,8 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
   // 4. season with auctions: aggression sweep, value of a dollar, stress test
   const B = lg.faab(me);
   const base = { me, teams, rosters: Object.fromEntries([...ros]), budget: Object.fromEntries(teams.map((t) => [t, lg.faab(t)])),
-    pending_pool: pending ? pendPool : null, weeks, S: lg.slots.length, week0Idx: null };
-  if (U.locked.size && !pending) {
+    pending_pool: pending && pendPool.length ? pendPool : null, weeks, S: lg.slots.length, week0Idx: null };
+  if (U.locked.size && !base.pending_pool) {
     base.week0Idx = new Int32Array(teams.length * L);
     teams.forEach((t, j) => base.week0Idx.set(U.lineupIdx(0, ros.get(t), U.starters0.get(t)), j * L));
   }

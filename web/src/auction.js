@@ -6,7 +6,7 @@
 // A league with fewer than MIN_BIDS bids gets PRIOR instead, with budgets in units of its starting FAAB.
 import { bestLineup, eligible, POS } from "./league.js";
 import { Rng } from "./rng.js";
-import { lstsq, mean, quantileSorted, solveSPD, sortNum, variance } from "./stats.js";
+import { lstsq, mean, pyRound, quantileSorted, solveSPD, sortNum, variance } from "./stats.js";
 
 export const HORIZON = 4;
 export const MIN_BIDS = 20;
@@ -62,7 +62,7 @@ export class BidModel extends Bids {
   }
 
   summary() {
-    const r3 = (x) => Math.round(x * 1000) / 1000;
+    const r3 = (x) => pyRound(x, 3);
     return {
       participation: Object.fromEntries(["a0", "a_log1p_gain", "a_log_budget"].map((k, i) => [k, r3(this.a[i])])),
       size: { ...Object.fromEntries(["b0", "b_gain", "b_log_budget", "b_leg"].map((k, i) => [k, r3(this.beta[i])])),
@@ -279,7 +279,7 @@ export function faabHistory(lg) {
     let left = 0;
     for (const r of lg.rosters.keys()) if (!dead.has(r)) left += B - (spent.get(r) || 0);
     rows.push({ leg, spent: legSpend, burned, top_price: top, buyers: buyers.size, alive: N - k, left,
-      linear_left: Math.round((N - k) * B * Math.max(0, 1 - k / nAuctions) * 10) / 10 });
+      linear_left: pyRound((N - k) * B * Math.max(0, 1 - k / nAuctions), 1) });
   }
   return rows;
 }

@@ -124,7 +124,9 @@ class League:
         raise KeyError(display_name)
 
     def alive(self):
-        return sorted(r for r, x in self.rosters.items() if x.get("players"))
+        """Teams still in: rosters with players that haven't been chopped (some leagues leave a chopped roster's players)."""
+        chopped = {t["roster_ids"][0] for w in self.tx for t in self.tx[w] if t["type"] == "chopped"}
+        return sorted(r for r, x in self.rosters.items() if x.get("players") and r not in chopped)
 
     def faab(self, rid):
         return self.budget - self.rosters[rid]["settings"].get("waiver_budget_used", 0)
