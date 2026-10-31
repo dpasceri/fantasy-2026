@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local config (your league IDs and username)
+config.json
+
+# League data: rosters, users, transactions, projections
+data/
+guillotine/data/
+
+# Generated output
+out/
+trade_search/
+trade_talks/
+
+# Backtest bench: caches, results and run state
+guillotine/bench/cache/
+guillotine/bench/results/
+guillotine/bench/verify/
+guillotine/bench/logs/
+guillotine/bench/queue/
+guillotine/bench/.slots/
+guillotine/bench/.pip.lock
+guillotine/bench/candidates/*/tune_out/
+*.npz
+*.pkl
+*.log
+
+# Editor / tooling
+.claude/
+.vscode/
+.idea/
