@@ -511,6 +511,13 @@ def render(r, path=None):
                   f"chopped {pct(avg_p)} on average (a uniform guess gives {pct(avg_u)}) and ranked them most likely {hits} of {len(bt['weeks'])} weeks. "
                   f"Log-loss {bt['logloss_model']:.3f} vs {bt['logloss_uniform']:.3f} for uniform. Chops are noisy; this is an edge, not a crystal ball.")
     sz, pa = bmr["size"], bmr["participation"]
+    if bmr.get("prior"):
+        fit_src = (f"This league has only {bmr['n_bids']} bids so far, too few to fit, so these are a prior fit on another "
+                   "league's bids, with budgets scaled to this league's FAAB and no per-manager effects.")
+        r2_txt = ""
+    else:
+        fit_src = "Fit on every bid this league has placed, winners and losers, with each manager's budget at the time."
+        r2_txt = f" R² = {sz['r2']}."
     gen = dt.datetime.fromtimestamp(r["generated_at"]).strftime("%a %b %-d, %-I:%M %p")
     fet = dt.datetime.fromtimestamp(r["fetched_at"]).strftime("%a %b %-d, %-I:%M %p")
     pend = (f' · auction pending for {esc(r["pending"]["owner"])}' if r.get("pending") else "")
@@ -644,7 +651,7 @@ a = QB {cop['loadings']['QB']}, RB {cop['loadings']['RB']}, WR {cop['loadings'][
 P(j bids)      = logistic({pa['a0']} + {pa['a_log1p_gain']}·ln(1+gain) {pa['a_log_budget']:+}·ln(budget) + v_j)
 ln(bid | bids) = {sz['b0']} + {sz['b_gain']}·gain + {sz['b_log_budget']}·ln(budget) + {sz['b_leg']}·week + u_j + e
                  sd(e) = {sz['sigma']}</div>
-  <p>Fit on every bid this league has placed, winners and losers, with each manager's budget at the time. Each extra lineup point a week raises a typical bid by about {100 * (2.71828 ** sz['b_gain'] - 1):.0f}%, and bids rise about {100 * (2.71828 ** sz['b_leg'] - 1):.0f}% per week as the season goes on. R² = {sz['r2']}.</p>
+  <p>{fit_src} Each extra lineup point a week raises a typical bid by about {100 * (2.71828 ** sz['b_gain'] - 1):.0f}%, and bids rise about {100 * (2.71828 ** sz['b_leg'] - 1):.0f}% per week as the season goes on.{r2_txt}</p>
   <h3>4 · Your bid</h3>
   <p>Sleeper FAAB is a sealed first-price auction: highest bid wins and pays its own bid. If F(b) is the chance your bid beats every rival and V is what the player adds to your win chance, the textbook answer is the bid that maximizes F(b) · (V − λb), where λ is what a dollar is worth to you later. Here λ isn't constant (the money curve bends), and V depends on what you'd buy later instead. So the sheet doesn't use the formula directly. It plays the whole rest of the season with every candidate bid and picks the one with the highest P(win league):</p>
   <div class="eq">b* = argmax_b  P(win league | bid b on player i,
