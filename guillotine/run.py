@@ -75,6 +75,11 @@ def summarize_grid(pts):
                                               int(max(b for b, s in zip(bids, sm) if s >= sm[j] - se))]}
 
 
+def budget_steps(budget):
+    """Budget cuts for the value-of-a-dollar curve: $20, 40, 80, 120 in a $200 league, scaled to the league's FAAB."""
+    return [round(d * budget / 200) for d in (20, 40, 80, 120)]
+
+
 def trade_faab(lg, rid):
     """Net FAAB this team has received in completed trades (negative = sent)."""
     net = 0
@@ -186,7 +191,6 @@ def main():
         for i in plist:
             var2.append(ros[me] + [i]); alive2.append(mask); lab2.append((kk, i))
     S2 = run_season(U, SeasonPlan(U, teams, ros, me, var2, alive0=alive2, wi0=win0), 320_000 // k, seed=3)
-    tick(f"auction values, static ({len(var2)} variants)")
     base_win = {kk: float(S2["win"][v, me_t]) for v, (kk, i) in enumerate(lab2) if i is None}
     rng = np.random.default_rng(17)
     scen = []
@@ -205,7 +209,7 @@ def main():
                 "d_win_static": float(S2["win"][v, me_t]) - base_win[kk],
                 "rival_top": {str(q): float(np.quantile(top, q)) for q in (0.5, 0.8, 0.9, 0.95)},
                 "p_no_rival_bid": float((top == 0).mean()),
-                "p_beat_rivals": {str(b): float(curve[min(b, len(curve) - 1)]) for b in grid},
+                "p_beat_rivals": {str(b): float(curve[b]) for b in grid if b <= lg.faab(me)},
                 "rival_gains": [{"owner": lg.owner(t), "gain": round(g, 2), "faab": lg.faab(t)}
                                 for t, g in sorted(gains.items(), key=lambda kv: -kv[1])[:4]],
             })
@@ -213,6 +217,7 @@ def main():
         scen.append({"rid": kk, "owner": lg.owner(kk), "known": bool(pending),
                      "p_chop": 1.0 if pending else float(S["chop"][0, teams.index(kk), 0]),
                      "base_win": base_win[kk], "players": rows})
+    tick(f"auction values, static ({len(var2)} variants)")
 
     # 4. season with auctions: aggression sweep, value of a dollar, stress test
     base = {"me": me, "teams": teams, "rosters": ros, "budget": {t: lg.faab(t) for t in teams},
@@ -225,7 +230,7 @@ def main():
     pol = dict(POLICY)
     used = next(d for d in D1 if (d["m_early"], d["m_late"]) == (pol["m_early"], pol["m_late"]))
     tick("dynamic: aggression sweep")
-    budgets = sorted({B, max(B - 20, 0), max(B - 40, 0), max(B - 80, 0), max(B - 120, 0), 0}, reverse=True)
+    budgets = sorted({B, 0} | {max(B - d, 0) for d in budget_steps(lg.budget)}, reverse=True)
     bud_set = [pol | {"budget": b} for b in budgets] + [pol | {"budget": b, "rival_boost": STRESS} for b in budgets]
     D2 = dynamic.run(U, bm, base, bud_set, 10_000 // k, seed=12)
     tick("dynamic: budget curve (+ stress test)")

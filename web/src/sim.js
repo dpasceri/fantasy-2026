@@ -18,6 +18,18 @@ const INJ_MEAN_WEEKS = { QB: 1.45, other: 2.07 };
 const INJ_LONG_WEEKS = 99;
 export const CHUNK = 8000;
 
+// ndtr(z) * (Q - 1) by table lookup on [-8.5, 8.5] in steps of 1/256 (linear interpolation error < 2e-7,
+// far finer than the Q-level quantile tables it indexes)
+const NT_LO = -8.5, NT_STEP = 256, NT = Float64Array.from({ length: 17 * NT_STEP + 2 }, (_, i) => ndtr(NT_LO + i / NT_STEP) * (Q - 1));
+const NT_MAX = NT.length - 2;
+function uOf(z) {
+  const x = (z - NT_LO) * NT_STEP;
+  if (x <= 0) return 0;
+  if (x >= NT_MAX) return Q - 1;
+  const i = x | 0;
+  return NT[i] + (x - i) * (NT[i + 1] - NT[i]);
+}
+
 /** Every player the sims touch, with per-week projections, quantile tables and NFL team/game ids. */
 export class Universe {
   constructor(lg, pm, pids, weeks) {
@@ -146,14 +158,14 @@ export function pathState(n) {
 export function drawWeek(U, wi, rng, st, score, avail, G, T) {
   const n = U.n, g = U.game_share, sg = Math.sqrt(g), st1 = Math.sqrt(1 - g);
   const ng = U.n_game[wi], nt = U.n_team[wi], game = U.game[wi], team = U.team[wi], q = U.qflat[wi];
-  for (let j = 0; j < ng; j++) G[j] = rng.normal();
-  for (let j = 0; j < nt; j++) T[j] = rng.normal();
+  const load = U.load, cload = U.cload, loglev = st.loglev, outLeft = st.outLeft;
+  for (let j = 0; j < ng; j++) G[j] = sg * rng.normal();
+  for (let j = 0; j < nt; j++) T[j] = st1 * rng.normal();
   const drift = wi > 0 ? -0.5 * LEVEL_STEP * LEVEL_STEP * wi : 0;
   for (let i = 0; i < n; i++) {
-    const z = U.load[i] * (sg * G[game[i]] + st1 * T[team[i]]) + U.cload[i] * rng.normal();
-    const u = ndtr(z) * (Q - 1);
-    const i0 = Math.min(Math.floor(u), Q - 2), fr = u - i0, b = i * Q + i0;
-    let s = q[b] * (1 - fr) + q[b + 1] * fr;
+    const u = uOf(load[i] * (G[game[i]] + T[team[i]]) + cload[i] * rng.normal());
+    const i0 = u >= Q - 2 ? Q - 2 : u | 0, fr = u - i0, b = i * Q + i0;
+    let s = q[b] + fr * (q[b + 1] - q[b]);
     let a;
     if (wi === 0) {
       a = rng.random() >= U.p_out[i];
@@ -162,12 +174,12 @@ export function drawWeek(U, wi, rng, st, score, avail, G, T) {
         a = true;
       }
     } else {
-      st.loglev[i] += rng.normal() * LEVEL_STEP;
-      s *= Math.exp(st.loglev[i] + drift);
-      if (st.outLeft[i] === 0 && rng.random() < U.haz[i])
-        st.outLeft[i] = rng.random() < U.p_long[i] ? INJ_LONG_WEEKS : rng.geometric(U.p_geo[i]);
-      a = st.outLeft[i] === 0;
-      if (st.outLeft[i] > 0) st.outLeft[i]--;
+      loglev[i] += rng.normal() * LEVEL_STEP;
+      s *= Math.exp(loglev[i] + drift);
+      if (outLeft[i] === 0 && rng.random() < U.haz[i])
+        outLeft[i] = rng.random() < U.p_long[i] ? INJ_LONG_WEEKS : rng.geometric(U.p_geo[i]);
+      a = outLeft[i] === 0;
+      if (outLeft[i] > 0) outLeft[i]--;
     }
     score[i] = s;
     avail[i] = a ? 1 : 0;

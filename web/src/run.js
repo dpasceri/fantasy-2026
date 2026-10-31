@@ -219,15 +219,18 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
     for (const i of plist) { var2.push([...ros.get(me), i]); alive2.push(mask); lab2.push([kk, i]); }
   }
   const S2 = await runSeason(pool, U, teams, ros, me, var2, 320_000 / k, { seed: 3, alive0: alive2, wi0: win0, onDone: onProgress });
-  tick(`auction values, static (${var2.length} variants)`);
   const baseWin = new Map(lab2.map(([kk, i], v) => [kk, i === null ? S2.win(v, meT) : undefined]).filter(([, x]) => x !== undefined));
   const rng = new Rng(17);
   const scen = [];
+  const nCurves = lab2.filter(([, i]) => i !== null).length;
+  let curves = 0;
   for (const [kk, plist] of cases) {
     const others = new Map(teams.filter((t) => t !== me && t !== kk).map((t) => [t, lg.faab(t)]));
     const rows = [];
-    lab2.forEach(([k2, i], v) => {
-      if (k2 !== kk || i === null) return;
+    for (const [v, [k2, i]] of lab2.entries()) {
+      if (k2 !== kk || i === null) continue;
+      onProgress(++curves, nCurves);
+      if (curves % 8 === 0) await new Promise((ok) => setTimeout(ok, 0)); // keep the page responsive
       const gains = new Map([...others.keys()].map((t) => [t, gain(lg, ros.get(t), i, wLo, wLo + 3)]));
       const top = topRivalBids(bm, others, gains, bidLeg, rng, 60_000);
       const curve = pWinCurve(top, lg.faab(me));
@@ -237,14 +240,15 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
         gain_me: pyRound(gain(lg, ros.get(me), i, wLo, wLo + 3), 2), d_win_static: S2.win(v, meT) - baseWin.get(kk),
         rival_top: Object.fromEntries([0.5, 0.8, 0.9, 0.95].map((q) => [String(q), quantileSorted(s, q)])),
         p_no_rival_bid: top.filter((x) => x === 0).length / top.length,
-        p_beat_rivals: Object.fromEntries(grid.map((b) => [String(b), curve[Math.min(b, curve.length - 1)]])),
+        p_beat_rivals: Object.fromEntries(grid.filter((b) => b <= lg.faab(me)).map((b) => [String(b), curve[b]])),
         rival_gains: [...gains].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, g]) => ({ owner: lg.owner(t), gain: pyRound(g, 2), faab: lg.faab(t) })),
       });
-    });
+    }
     rows.sort((a, b) => b.d_win_static - a.d_win_static);
     scen.push({ rid: kk, owner: lg.owner(kk), known: !!pending, p_chop: pending ? 1.0 : S.chop(0, teams.indexOf(kk), 0),
       base_win: baseWin.get(kk), players: rows });
   }
+  tick(`auction values, static (${var2.length} variants)`);
 
   // 4. season with auctions: aggression sweep, value of a dollar, stress test
   const B = lg.faab(me);
@@ -270,7 +274,7 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
   const used = D1.find((d) => d.m_early === pol.m_early && d.m_late === pol.m_late);
   tick("dynamic: aggression sweep");
   stage("Value of a FAAB dollar");
-  const budgets = [...new Set([B, B - 20, B - 40, B - 80, B - 120, 0].map((x) => Math.max(x, 0)))].sort((a, b) => b - a);
+  const budgets = [...new Set([B, 0, ...budgetSteps(lg.budget).map((d) => Math.max(B - d, 0))])].sort((a, b) => b - a);
   const budSet = [...budgets.map((b) => ({ ...pol, budget: b })), ...budgets.map((b) => ({ ...pol, budget: b, rival_boost: STRESS }))];
   const D2 = await runDynamic(pool, budSet, 10_000 / k, 12, onProgress);
   tick("dynamic: budget curve (+ stress test)");
@@ -344,6 +348,9 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
     price_backtest: priceBacktest(lg, bm), model_report: modelReport, backtest: null,
   };
 }
+
+/** Budget cuts for the value-of-a-dollar curve: $20, 40, 80, 120 in a $200 league, scaled to the league's FAAB. */
+export const budgetSteps = (budget) => [20, 40, 80, 120].map((d) => pyRound((d * budget) / 200));
 
 /** Net FAAB this team has received in completed trades (negative = sent). */
 export function tradeFaab(lg, rid) {

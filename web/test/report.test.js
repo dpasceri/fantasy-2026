@@ -37,13 +37,25 @@ def variant(name):
         r["power"].sort(key=lambda x: not x["me"])
     elif name == "me_last":
         r["power"].sort(key=lambda x: bool(x["me"]))
+    elif name in ("no_faab", "priced_out"):  # no bid in any grid beats skipping
+        for sc in r["scenarios"]:
+            for pl in sc["players"]:
+                if pl.get("bid"):
+                    pl["bid"]["best_bid"] = 0
+        if name == "no_faab":
+            r["faab_me"] = 1
+    elif name == "budget_1000":  # a $1000 league: dollar thresholds scale
+        r["faab_pace"]["start_total"] *= 5
+        for x in r["power"]:
+            x["faab"] *= 5
     elif name == "no_history":
         r["faab_pace"]["history"] = []
     with tempfile.TemporaryDirectory() as d:
         with open(report.render(r, os.path.join(d, "sheet.html"))) as f:
             return {"r": r, "html": f.read()}
 
-names = ["base", "prior", "pending", "no_live", "live_in_progress", "no_used", "me_first", "me_last", "no_history"]
+names = ["base", "prior", "pending", "no_live", "live_in_progress", "no_used", "me_first", "me_last", "no_history",
+         "no_faab", "priced_out", "budget_1000"]
 print(json.dumps({"css": report.CSS, "variants": {n: variant(n) for n in names}}))
 `;
 

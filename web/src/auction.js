@@ -327,7 +327,7 @@ export function priceBacktest(lg, bm, seed = 5) {
   const out = [];
   for (const rs of byRun.values()) {
     const bids = rs.filter((r) => (r.bid || 0) > 0);
-    if (!bids.length || Math.max(...bids.map((r) => r.bid)) < 15) continue;
+    if (!bids.length || Math.max(...bids.map((r) => r.bid)) < (15 * lg.budget) / 200) continue; // contested: $15+ in a $200 league
     const top = topRivalBids(bm, new Map(rs.map((r) => [r.rid, r.budget])), new Map(rs.map((r) => [r.rid, r.gain])), rs[0].leg, rng, 40000);
     const actual = Math.max(...bids.map((r) => r.bid));
     const s = sortNum(top);

@@ -176,6 +176,7 @@ export function render(r, { css } = {}) {
   const hist = pace.history;
   const fc = pace.forecast;
   const B0 = Math.floor(pace.start_total / (pace.n_auctions + 2)); // per-team starting budget
+  const usd = (x) => pyRound((x * B0) / 200); // a $200-league dollar amount, in this league's FAAB
   const last = hist.length ? hist[hist.length - 1] : null;
   const burnedTot = pySum(hist.map((h) => h.burned));
   const diedFull = hist.filter((h) => h.burned >= B0).length;
@@ -240,7 +241,7 @@ export function render(r, { css } = {}) {
     money += ` Bidding 1.5× early drops your win chance by up to ${f0(100 * (used.p_win - worstAggr.p_win))} pts.`;
   }
   const tb = topB.budget;
-  const marks = sortedBy(bud, (d) => -d.budget).filter((d) => [tb, tb - 40, tb - 80, tb - 120].includes(d.budget));
+  const marks = sortedBy(bud, (d) => -d.budget).filter((d) => [tb, tb - usd(40), tb - usd(80), tb - usd(120)].includes(d.budget));
   const segs = marks.slice(1).map((b, i) => {
     const a = marks[i];
     return `$${a.budget}→$${b.budget} left costs <b>${f1(100 * (a.p_win - b.p_win))} pts</b>`;
@@ -269,8 +270,15 @@ export function render(r, { css } = {}) {
         + `(+${f1(100 * lift)} pts vs skipping). Rivals' top bid on him: median $${f0(p0.rival_top["0.5"])}, 90th pct $${f0(p0.rival_top["0.9"])}.`]);
     } else {
       const big = maxBy(sc.players, (p) => p.d_win_static);
-      calls.push(["Auction", `${head}: nobody there is worth real money. $0–10 flyers only: no bid on `
-        + `${esc(short(big.player))} beats skipping by even half a point, because your lineup barely improves.`]);
+      if (r.faab_me < usd(10))
+        calls.push(["Auction", `${head}: with $${r.faab_me} FAAB you can't outbid anyone, so put in $0 claims and hope players clear. `
+          + `${esc(short(big.player))} would add ${pp(big.d_win_static)} if he got through.`]);
+      else if (big.d_win_static >= 0.01)
+        calls.push(["Auction", `${head}: rivals price these players out. ${esc(short(big.player))} would add ${pp(big.d_win_static)} `
+          + `if free, but no bid beats skipping by even half a point once you pay what it takes. $0–${usd(10)} flyers only.`]);
+      else
+        calls.push(["Auction", `${head}: nobody there is worth real money. $0–${usd(10)} flyers only: no bid on `
+          + `${esc(short(big.player))} beats skipping by even half a point, because your lineup barely improves.`]);
     }
   }
   const callHtml = calls.map(([k, v]) => `<li><div><span class="k">${esc(k)}</span><span class="v">${v}</span></div></li>`).join("");
@@ -450,8 +458,8 @@ export function render(r, { css } = {}) {
     + `<td class="num r">${fmtG(x.ros_proj)}</td>`
     + `<td class="num r" data-tip="${esc(`Weakest projected lineup: week ${x.worst_week}, ${fmtG(x.worst_proj)} pts (byes/injuries)`)}" tabindex="0">wk ${x.worst_week} · ${f0(x.worst_proj)}</td>`
     + `<td>${riskChip(x.p_chop_now)}</td><td class="num r">${f1(x.e_weeks)}</td></tr>`).join("");
-  const broke = pw.filter((x) => x.faab <= 15).map((x) => x.owner);
-  const brokeTxt = broke.length ? broke.map(esc).join(", ") + " have $15 or less" : "nobody is broke yet";
+  const broke = pw.filter((x) => x.faab <= usd(15)).map((x) => x.owner);
+  const brokeTxt = broke.length ? broke.map(esc).join(", ") + ` have $${usd(15)} or less` : "nobody is broke yet";
   const powerBox = `<section class="box"><h2>Power rankings <small>who wins with the auctions played out · ${fmtComma(r.sims.dynamic_paths)}+ season paths</small></h2><div class="inner">
   <div class="tbl"><table><thead><tr><th>#</th><th>Team</th><th class="r">Win league</th><th class="r">Frozen rosters</th><th class="r">FAAB</th><th class="r">Lineup proj /wk</th><th class="r">Weakest week</th><th>Chop wk ${wk}</th><th class="r">Weeks survived of ${weeks.length}</th></tr></thead><tbody>${pwRows}</tbody></table></div>
   <p class="note"><b>Win league</b> plays every remaining week and auction, with every manager, you included, bidding the way they have all season. That's the fair ranking; under your name is your chance if you bid the recommended way instead. <b>Frozen rosters</b> is the same race with no more auctions: it rewards teams that already spent (${brokeTxt}) and ignores what money will buy. Lineup proj is the average projected best lineup over weeks ${wRange}; the weakest week is the bye-week hole most likely to get them chopped.</p>

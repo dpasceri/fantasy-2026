@@ -252,7 +252,7 @@ def price_backtest(lg, bm, seed=5):
         by_run.setdefault((r["run"], r["pid"]), []).append(r)
     for (run, pid), rs in by_run.items():
         bids = [r for r in rs if (r["bid"] or 0) > 0]
-        if not bids or max(r["bid"] for r in bids) < 15:
+        if not bids or max(r["bid"] for r in bids) < 15 * lg.budget / 200:  # contested: $15+ in a $200 league
             continue
         top = top_rival_bids(bm, {r["rid"]: r["budget"] for r in rs}, {r["rid"]: r["gain"] for r in rs}, rs[0]["leg"], rng, 40000)
         actual = max(r["bid"] for r in bids)

@@ -271,6 +271,7 @@ def render(r, path=None):
     hist = pace["history"]
     fc = pace["forecast"]
     B0 = pace["start_total"] // (pace["n_auctions"] + 2)  # per-team starting budget
+    usd = lambda x: round(x * B0 / 200)  # noqa: E731  (a $200-league dollar amount, in this league's FAAB)
     last = hist[-1] if hist else None
     burned_tot = sum(h["burned"] for h in hist)
     died_full = sum(1 for h in hist if h["burned"] >= B0)
@@ -322,7 +323,7 @@ def render(r, path=None):
     if worst_aggr and used["p_win"] - worst_aggr["p_win"] >= 0.005:
         money += f" Bidding 1.5× early drops your win chance by up to {100 * (used['p_win'] - worst_aggr['p_win']):.0f} pts."
     segs = []
-    marks = [d for d in sorted(bud, key=lambda d: -d["budget"]) if d["budget"] in (top_b["budget"], top_b["budget"] - 40, top_b["budget"] - 80, top_b["budget"] - 120)]
+    marks = [d for d in sorted(bud, key=lambda d: -d["budget"]) if d["budget"] in (top_b["budget"], top_b["budget"] - usd(40), top_b["budget"] - usd(80), top_b["budget"] - usd(120))]
     for a, b in zip(marks, marks[1:]):
         segs.append(f"${a['budget']}→${b['budget']} left costs <b>{100 * (a['p_win'] - b['p_win']):.1f} pts</b>")
     if segs:
@@ -350,8 +351,15 @@ def render(r, path=None):
                           f"(+{100 * lift:.1f} pts vs skipping). Rivals' top bid on him: median ${p0['rival_top']['0.5']:.0f}, 90th pct ${p0['rival_top']['0.9']:.0f}."))
         else:
             big = max(sc["players"], key=lambda p: p["d_win_static"])
-            calls.append(("Auction", f"{head}: nobody there is worth real money. $0–10 flyers only: no bid on "
-                          f"{esc(short(big['player']))} beats skipping by even half a point, because your lineup barely improves."))
+            if r["faab_me"] < usd(10):
+                calls.append(("Auction", f"{head}: with ${r['faab_me']} FAAB you can't outbid anyone, so put in $0 claims and hope players clear. "
+                              f"{esc(short(big['player']))} would add {pp(big['d_win_static'])} if he got through."))
+            elif big["d_win_static"] >= 0.01:
+                calls.append(("Auction", f"{head}: rivals price these players out. {esc(short(big['player']))} would add {pp(big['d_win_static'])} "
+                              f"if free, but no bid beats skipping by even half a point once you pay what it takes. $0–{usd(10)} flyers only."))
+            else:
+                calls.append(("Auction", f"{head}: nobody there is worth real money. $0–{usd(10)} flyers only: no bid on "
+                              f"{esc(short(big['player']))} beats skipping by even half a point, because your lineup barely improves."))
 
     def call_html():
         return "".join(f'<li><div><span class="k">{esc(k)}</span><span class="v">{v}</span></div></li>' for k, v in calls)
@@ -534,8 +542,8 @@ def render(r, path=None):
         f'<td class="num r" data-tip="{esc(f"Weakest projected lineup: week {x["worst_week"]}, {x["worst_proj"]:g} pts (byes/injuries)")}" tabindex="0">wk {x["worst_week"]} · {x["worst_proj"]:.0f}</td>'
         f'<td>{risk_chip(x["p_chop_now"])}</td><td class="num r">{x["e_weeks"]:.1f}</td></tr>'
         for i, x in enumerate(pw, start=1))
-    broke = [x['owner'] for x in pw if x['faab'] <= 15]
-    broke_txt = (', '.join(esc(b) for b in broke) + ' have $15 or less') if broke else 'nobody is broke yet'
+    broke = [x['owner'] for x in pw if x['faab'] <= usd(15)]
+    broke_txt = (', '.join(esc(b) for b in broke) + f' have ${usd(15)} or less') if broke else 'nobody is broke yet'
     power_box = f"""<section class="box"><h2>Power rankings <small>who wins with the auctions played out · {r['sims']['dynamic_paths']:,}+ season paths</small></h2><div class="inner">
   <div class="tbl"><table><thead><tr><th>#</th><th>Team</th><th class="r">Win league</th><th class="r">Frozen rosters</th><th class="r">FAAB</th><th class="r">Lineup proj /wk</th><th class="r">Weakest week</th><th>Chop wk {wk}</th><th class="r">Weeks survived of {len(weeks)}</th></tr></thead><tbody>{pw_rows}</tbody></table></div>
   <p class="note"><b>Win league</b> plays every remaining week and auction, with every manager, you included, bidding the way they have all season. That's the fair ranking; under your name is your chance if you bid the recommended way instead. <b>Frozen rosters</b> is the same race with no more auctions: it rewards teams that already spent ({broke_txt}) and ignores what money will buy. Lineup proj is the average projected best lineup over weeks {weeks[0]}–{weeks[-1]}; the weakest week is the bye-week hole most likely to get them chopped.</p>
