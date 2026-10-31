@@ -1,5 +1,7 @@
 // Spreads sim chunks over CPU cores. WorkerPool uses Web Workers (one per core); InlinePool runs on the
 // calling thread. Both: set(key, value) sends shared inputs to every worker, map(kind, jobs, onDone) runs jobs.
+// Jobs from several map() calls share one queue in the order they were added, so a stage's tail is filled by
+// the next stage's jobs; every job's result depends only on its own inputs, never on which worker ran it or when.
 import { makeEngine } from "./engine.js";
 
 export class InlinePool {
@@ -31,6 +33,8 @@ export class WorkerPool {
     this.workers = Array.from({ length: size }, () => makeWorker());
     this.next = 0;
     this.waiting = new Map();
+    this.queue = []; // jobs not yet sent: {kind, job, ok, fail}
+    this.idle = [...this.workers];
     for (const w of this.workers) {
       const onMsg = (m) => {
         const { id, result, error } = m.data ?? m;
@@ -52,6 +56,8 @@ export class WorkerPool {
   _failAll(msg) {
     for (const p of this.waiting.values()) p.fail(new Error(msg));
     this.waiting.clear();
+    for (const q of this.queue) q.fail(new Error(msg));
+    this.queue = [];
   }
 
   _send(w, msg) {
@@ -62,22 +68,27 @@ export class WorkerPool {
     });
   }
 
+  /** Workers see a set before any job queued after it (messages arrive in order), so use a fresh key per stage. */
   set(key, value) {
     return Promise.all(this.workers.map((w) => this._send(w, { type: "set", key, value })));
   }
 
-  /** Runs jobs on whichever worker is free; results come back in job order. */
+  /** Queues jobs for whichever worker is free next; results come back in job order. */
   map(kind, jobs, onDone = () => {}) {
-    const out = new Array(jobs.length);
-    let i = 0, done = 0;
-    const feed = async (w) => {
-      while (i < jobs.length) {
-        const k = i++;
-        out[k] = await this._send(w, { type: "run", kind, job: jobs[k] });
-        onDone(++done, jobs.length);
-      }
-    };
-    return Promise.all(this.workers.map(feed)).then(() => out);
+    let done = 0;
+    const out = jobs.map((job) => new Promise((ok, fail) => this.queue.push({ kind, job, fail, ok: (r) => { onDone(++done, jobs.length); ok(r); } })));
+    this._pump();
+    return Promise.all(out);
+  }
+
+  _pump() {
+    while (this.idle.length && this.queue.length) {
+      const w = this.idle.pop(), q = this.queue.shift();
+      this._send(w, { type: "run", kind: q.kind, job: q.job }).then(q.ok, q.fail).then(() => {
+        this.idle.push(w);
+        this._pump();
+      });
+    }
   }
 
   close() {

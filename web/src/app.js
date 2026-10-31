@@ -81,17 +81,18 @@ async function run() {
   let pool = null;
   try {
     progress("Downloading league data and projections…", 0);
+    pool = makePool(); // the workers load while the data downloads
+    const cssP = cssText === null ? fetch(new URL("../sheet.css", import.meta.url)).then((r) => r.text()) : null;
     const raw = await loadAll(leagueId, (d, n) => progress(`Downloading league data and projections (${d} of ${n})…`, (0.15 * d) / n));
     const lg = new League(raw, rid);
     if (!lg.alive().includes(rid)) throw new Error("That team has already been chopped, so there's nothing left to simulate.");
     if (lg.week > lg.final_week) throw new Error("This league's season is over.");
-    pool = makePool();
-    let stageName = "", stageAt = 0, stageN = 8;
+    let stageName = "", frac = 0; // stages overlap, so progress counts work done over the whole run
     const r = await runAll(lg, pool, {
-      onStage: (name, i, n) => { stageName = name; stageAt = i; stageN = n; progress(`${name}…`, 0.15 + (0.85 * i) / n); },
-      onProgress: (d, n) => progress(`${stageName} (${Math.round((100 * d) / n)}%)…`, 0.15 + (0.85 * (stageAt + d / n)) / stageN),
+      onStage: (name) => { stageName = name; progress(`${stageName} (${Math.round(100 * frac)}%)…`, 0.15 + 0.85 * frac); },
+      onProgress: (d, n) => { frac = Math.min(d / n, 1); progress(`${stageName} (${Math.round(100 * frac)}%)…`, 0.15 + 0.85 * frac); },
     });
-    cssText ??= await (await fetch(new URL("../sheet.css", import.meta.url))).text();
+    if (cssP) cssText = await cssP;
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n${render(r, { css: cssText })}</html>`;
     showSheet(html, r);
     const secs = Math.round((performance.now() - t0) / 1000);

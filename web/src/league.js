@@ -139,7 +139,7 @@ export class League {
 
 // The order bestLineup fills slots in, worked out once per slots array (the sims reuse the league's).
 const SLOT_ORDER = new WeakMap();
-function slotOrder(slots) {
+export function slotOrder(slots) {
   let o = SLOT_ORDER.get(slots);
   if (!o) {
     const fixed = slots.filter((s) => POS.includes(s));

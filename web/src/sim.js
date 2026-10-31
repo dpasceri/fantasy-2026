@@ -154,39 +154,81 @@ export function pathState(n) {
   return { loglev: new Float32Array(n), outLeft: new Int16Array(n) };
 }
 
-/** Draw week wi of one sim into score/avail (length n + 1; the last entry is an empty slot). */
+/**
+ * Draw week wi of one sim into score/avail (length n + 1; the last entry is an empty slot). The draws happen in
+ * one fixed order: game factors, team factors, then per player. The per-player loops live in their own functions
+ * so each stays within V8's inlining budget and the random-number methods are inlined at every call site.
+ */
 export function drawWeek(U, wi, rng, st, score, avail, G, T) {
-  const n = U.n, g = U.game_share, sg = Math.sqrt(g), st1 = Math.sqrt(1 - g);
-  const ng = U.n_game[wi], nt = U.n_team[wi], game = U.game[wi], team = U.team[wi], q = U.qflat[wi];
-  const load = U.load, cload = U.cload, loglev = st.loglev, outLeft = st.outLeft;
-  const pOut = U.p_out, haz = U.haz, pLong = U.p_long, pGeo = U.p_geo, locked = U.anyLocked, started = U.started;
-  for (let j = 0; j < ng; j++) G[j] = sg * rng.normal();
-  for (let j = 0; j < nt; j++) T[j] = st1 * rng.normal();
-  const drift = wi > 0 ? -0.5 * LEVEL_STEP * LEVEL_STEP * wi : 0;
+  const n = U.n, g = U.game_share, sg = Math.sqrt(g), st1 = Math.sqrt(1 - g), ng = U.n_game[wi], nt = U.n_team[wi];
+  for (let j = 0; j < ng + nt; j++) {
+    const z = rng.normal();
+    if (j < ng) G[j] = sg * z;
+    else T[j - ng] = st1 * z;
+  }
+  if (wi === 0) drawFirst(U, rng, score, avail, G, T);
+  else drawLater(U, wi, rng, st, score, avail, G, T);
+  score[n] = 0;
+  avail[n] = 0;
+}
+
+// This week: known injury tags decide who sits; a game under way carries its points so far.
+function drawFirst(U, rng, score, avail, G, T) {
+  const n = U.n, game = U.game[0], team = U.team[0], q = U.qflat[0], load = U.load, cload = U.cload;
+  const pOut = U.p_out, locked = U.anyLocked, started = U.started, pts0 = U.pts0, fracLeft = U.frac_left;
   for (let i = 0; i < n; i++) {
     const u = uOf(load[i] * (G[game[i]] + T[team[i]]) + cload[i] * rng.normal());
     const i0 = u >= Q - 2 ? Q - 2 : u | 0, fr = u - i0, b = i * Q + i0;
     let s = q[b] + fr * (q[b + 1] - q[b]);
-    let a;
-    if (wi === 0) {
-      a = rng.random() >= pOut[i];
-      if (locked && started[i]) {
-        s = U.pts0[i] + U.frac_left[i] * s;
-        a = true;
-      }
-    } else {
-      loglev[i] += rng.normal() * LEVEL_STEP;
-      s *= Math.exp(loglev[i] + drift);
-      if (outLeft[i] === 0 && rng.random() < haz[i])
-        outLeft[i] = rng.random() < pLong[i] ? INJ_LONG_WEEKS : rng.geometric(pGeo[i]);
-      a = outLeft[i] === 0;
-      if (outLeft[i] > 0) outLeft[i]--;
+    let a = rng.random() >= pOut[i];
+    if (locked && started[i]) {
+      s = pts0[i] + fracLeft[i] * s;
+      a = true;
     }
     score[i] = s;
     avail[i] = a ? 1 : 0;
   }
-  score[n] = 0;
-  avail[n] = 0;
+}
+
+// Weeks out for a new absence: season-long, or geometric. Out of the hot loop, so it isn't inlined there.
+function absence(rng, pLong, pGeo) {
+  return rng.random() < pLong ? INJ_LONG_WEEKS : rng.geometric(pGeo);
+}
+
+// Later weeks: the level drifts, and new absences start and run down.
+function drawLater(U, wi, rng, st, score, avail, G, T) {
+  const n = U.n, game = U.game[wi], team = U.team[wi], q = U.qflat[wi], load = U.load, cload = U.cload;
+  const loglev = st.loglev, outLeft = st.outLeft, haz = U.haz, pLong = U.p_long, pGeo = U.p_geo;
+  const drift = -0.5 * LEVEL_STEP * LEVEL_STEP * wi;
+  for (let i = 0; i < n; i++) {
+    const u = uOf(load[i] * (G[game[i]] + T[team[i]]) + cload[i] * rng.normal());
+    const i0 = u >= Q - 2 ? Q - 2 : u | 0, fr = u - i0, b = i * Q + i0;
+    const s = q[b] + fr * (q[b + 1] - q[b]);
+    const lv = Math.fround(loglev[i] + rng.normal() * LEVEL_STEP); // rounds as the Float32Array store does
+    loglev[i] = lv;
+    let o = outLeft[i];
+    if (o === 0 && rng.random() < haz[i]) o = absence(rng, pLong[i], pGeo[i]);
+    score[i] = s * Math.exp(lv + drift);
+    avail[i] = o === 0 ? 1 : 0;
+    outLeft[i] = o > 0 ? o - 1 : o;
+  }
+}
+
+/**
+ * Totals for a set of lineup rows that share slot triples (see run.js's slotTriples): each distinct
+ * (starter, sub, sub) is scored once into tv, then every row adds its S slots in slot order, as teamScore does.
+ */
+function rowScores(score, avail, trip, of, S, tv, out, R) {
+  const nTrip = trip.length / 3;
+  for (let j = 0; j < nTrip; j++) {
+    const a = trip[3 * j], b1 = trip[3 * j + 1], b2 = trip[3 * j + 2];
+    tv[j] = avail[a] ? score[a] : avail[b1] ? score[b1] : avail[b2] ? score[b2] : 0;
+  }
+  for (let u = 0; u < R; u++) {
+    let tot = 0;
+    for (let k = 0; k < S; k++) tot += tv[of[u * S + k]];
+    out[u] = tot;
+  }
 }
 
 /** Team total for one lineup: idx is Int32Array(3 * S) at offset off. */
@@ -213,34 +255,46 @@ export function seasonChunk(U, plan, ci, C, seed) {
   const rng = new Rng(seed, ci);
   const chops = new Float64Array(V * T * W), wins = new Float64Array(V * T);
   const lineHist = new Float64Array(W * 400), myHist = new Float64Array(W * 400);
-  const { score, avail, G, T: TT } = scratch(U);
+  const { score, avail, G, T: TT } = scratch(U), st = pathState(U.n);
   const alive = new Uint8Array(V * T), opp = new Float64Array(T), mine = new Float64Array(V), uniq = new Float64Array(V);
+  const tv = new Float64Array(Math.max(1, ...Object.values(plan.trip).map((t) => t.length / 3)));
+  const ord = new Int32Array(T); // rivals from lowest score up; ties keep team order, like the argmin below
   for (let c = 0; c < C; c++) {
     alive.set(plan.alive0);
-    const st = pathState(U.n);
+    st.loglev.fill(0);
+    st.outLeft.fill(0);
     for (let wi = wi0; wi < W; wi++) {
       let nAlive = 0;
       for (let t = 0; t < T; t++) nAlive += alive[t];
       if (nAlive <= 1) break;
       drawWeek(U, wi, rng, st, score, avail, G, TT);
-      const oi = plan.opp[wi], mi = plan.mine[wi], of = plan.mineOf[wi], U1 = mi.length / L;
+      const oi = plan.opp[wi], of = plan.mineOf[wi], U1 = plan.mine[wi].length / L;
       for (let t = 0; t < T; t++) opp[t] = teamScore(score, avail, oi, t * L, S);
-      for (let u = 0; u < U1; u++) uniq[u] = teamScore(score, avail, mi, u * L, S);
+      rowScores(score, avail, plan.trip[wi], plan.mineTrip[wi], S, tv, uniq, U1);
       for (let v = 0; v < V; v++) mine[v] = uniq[of[v]];
+      let nr = 0;
+      for (let t = 0; t < T; t++) {
+        if (t === me_t) continue;
+        let j = nr++;
+        for (; j > 0 && opp[ord[j - 1]] > opp[t]; j--) ord[j] = ord[j - 1];
+        ord[j] = t;
+      }
       const wasAlive = alive[me_t] === 1; // variant 0, going into this week
+      // the chop is the lowest alive score, the earliest team on a tie: my score vs the lowest alive rival
       for (let v = 0; v < V; v++) {
-        let k = -1, lo = Infinity;
-        for (let t = 0; t < T; t++) {
-          if (!alive[v * T + t]) continue;
-          const x = t === me_t ? mine[v] : opp[t];
-          if (x < lo || k < 0) { lo = x; k = t; }
+        const av = v * T;
+        let r = 0;
+        while (r < nr && !alive[av + ord[r]]) r++;
+        const t1 = r < nr ? ord[r] : me_t, x1 = r < nr ? opp[t1] : Infinity;
+        let k = t1;
+        if (alive[av + me_t]) {
+          const m = mine[v];
+          if (m < x1 || (m === x1 && me_t < t1)) k = me_t;
         }
-        alive[v * T + k] = 0;
-        chops[(v * T + k) * W + wi]++;
+        alive[av + k] = 0;
+        chops[(av + k) * W + wi]++;
         if (v === 0 && wasAlive) {
-          let line = Infinity;
-          for (let t = 0; t < T; t++) if (t !== me_t && alive[t] | (t === k)) line = Math.min(line, opp[t]);
-          lineHist[wi * 400 + bin(line)]++;
+          lineHist[wi * 400 + bin(x1)]++;
           myHist[wi * 400 + bin(mine[0])]++;
         }
       }
@@ -258,17 +312,18 @@ const bin = (x) => Math.trunc(Math.min(Math.max(x * 2, 0), 399));
 
 /** One-week lineup sims: P(my lineup scores below the lowest rival), mean and sum of squares per lineup. */
 export function weekChunk(U, job, ci, C, seed) {
-  const { S, T, V, me_t, opp: oi, mine: mi } = job, L = 3 * S;
+  const { S, T, V, me_t, opp: oi, trip, mineTrip } = job, L = 3 * S;
   const rng = new Rng(seed, ci);
   const chopped = new Float64Array(V), s1 = new Float64Array(V), s2 = new Float64Array(V);
   const { score, avail, G, T: TT } = scratch(U);
-  const st = pathState(U.n);
+  const st = pathState(U.n), mine = new Float64Array(V), tv = new Float64Array(Math.max(1, trip.length / 3));
   for (let c = 0; c < C; c++) {
     drawWeek(U, 0, rng, st, score, avail, G, TT);
     let line = Infinity;
     for (let t = 0; t < T; t++) if (t !== me_t) line = Math.min(line, teamScore(score, avail, oi, t * L, S));
+    rowScores(score, avail, trip, mineTrip, S, tv, mine, V);
     for (let v = 0; v < V; v++) {
-      const m = teamScore(score, avail, mi, v * L, S);
+      const m = mine[v];
       if (m < line) chopped[v]++;
       s1[v] += m;
       s2[v] += m * m;

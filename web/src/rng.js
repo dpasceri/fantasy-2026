@@ -47,16 +47,14 @@ export class Rng {
     this.d = sm() | 0;
   }
 
-  /** A uniform 32-bit integer, as a signed int32. */
+  /** A uniform 32-bit integer, as a signed int32 (xoshiro128**'s step, written with one load and one store per word). */
   nextI32() {
-    const b = this.b, r = Math.imul(rotl(Math.imul(b, 5), 7), 9), t = b << 9;
-    this.c ^= this.a;
-    this.d ^= b;
-    this.b ^= this.c;
-    this.a ^= this.d;
-    this.c ^= t;
-    this.d = rotl(this.d, 11);
-    return r;
+    const a = this.a, b = this.b, c = this.c ^ a, d = this.d ^ b;
+    this.a = a ^ d;
+    this.b = b ^ c;
+    this.c = c ^ (b << 9);
+    this.d = rotl(d, 11);
+    return Math.imul(rotl(Math.imul(b, 5), 7), 9);
   }
 
   /** Uniform on (0, 1). */
@@ -64,10 +62,14 @@ export class Rng {
     return ((this.nextI32() >>> 0) + 0.5) * 2.3283064365386963e-10;
   }
 
-  /** Standard normal (ziggurat). */
+  /** Standard normal (ziggurat). Small on purpose, so the sims' hot loops get it inlined at every call site. */
   normal() {
-    let hz = this.nextI32(), iz = hz & 127;
-    if (Math.abs(hz) < KN[iz]) return hz * WN[iz];
+    const hz = this.nextI32(), iz = hz & 127;
+    return Math.abs(hz) < KN[iz] ? hz * WN[iz] : this.normalTail(hz, iz);
+  }
+
+  /** The ~1% of draws that miss the ziggurat's rectangles: wedges and the tail. */
+  normalTail(hz, iz) {
     for (;;) {
       if (iz === 0) { // the tail beyond ZIG_R
         let x, y;
