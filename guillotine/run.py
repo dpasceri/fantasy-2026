@@ -19,7 +19,7 @@ from model import PlayerModel
 from model import fit as fit_model
 from sim import SeasonPlan, Universe, enumerate_lineups, run_season, run_week_lineups
 
-BID_GRID = (0, 10, 20, 30, 45, 60, 80, 100, 125, 150, 165)
+BID_GRID = (0, 10, 20, 30, 45, 60, 80, 100, 125, 150, 165)  # in a $200 league; scaled to the league's FAAB
 STRESS = (0.7, 0.3)  # rivals bid ~2x as often (logit +0.7) and ~35% higher (log +0.3)
 # my bid multiplier, fixed: the sweep's cells tie within noise and its argmax chased that noise; 0.75x all
 # season held up best on fresh seeds (bench/RESULTS.md). The sweep stays on the sheet for context.
@@ -75,6 +75,17 @@ def summarize_grid(pts):
                                               int(max(b for b, s in zip(bids, sm) if s >= sm[j] - se))]}
 
 
+def trade_faab(lg, rid):
+    """Net FAAB this team has received in completed trades (negative = sent)."""
+    net = 0
+    for w in lg.tx:
+        for t in lg.tx[w]:
+            if t["type"] == "trade" and t["status"] == "complete":
+                for wb in t.get("waiver_budget") or []:
+                    net += wb["amount"] * ((wb["receiver"] == rid) - (wb["sender"] == rid))
+    return net
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
@@ -91,6 +102,7 @@ def main():
         t0[0] = time.time()
 
     lg = League(args.me)
+    grid = sorted({round(b * lg.budget / 200) for b in BID_GRID})
     _, model_report = fit_model(lg)
     pm = PlayerModel()
     bm = BidModel(lg)
@@ -193,7 +205,7 @@ def main():
                 "d_win_static": float(S2["win"][v, me_t]) - base_win[kk],
                 "rival_top": {str(q): float(np.quantile(top, q)) for q in (0.5, 0.8, 0.9, 0.95)},
                 "p_no_rival_bid": float((top == 0).mean()),
-                "p_beat_rivals": {str(b): float(curve[min(b, len(curve) - 1)]) for b in BID_GRID},
+                "p_beat_rivals": {str(b): float(curve[min(b, len(curve) - 1)]) for b in grid},
                 "rival_gains": [{"owner": lg.owner(t), "gain": round(g, 2), "faab": lg.faab(t)}
                                 for t, g in sorted(gains.items(), key=lambda kv: -kv[1])[:4]],
             })
@@ -236,13 +248,14 @@ def main():
     power.sort(key=lambda x: -x["p_win"])
     pace = {"history": faab_history(lg), "start_total": lg.league["total_rosters"] * lg.budget,
             "n_auctions": lg.league["total_rosters"] - 2, "left_now": sum(lg.faab(t) for t in teams),
+            "trade_net_me": trade_faab(lg, me),
             "forecast": {key: P_fit[key] for key in ("league_spend", "burned", "top_price")}}
 
     # 5. forced-bid grids: P(win | my bid) for the players that matter in the next auction
     jobs = []
     for sc in scen[: (1 if pending else 4)]:
         for r in [r for r in sc["players"] if r["gain_me"] >= dynamic.MIN_GAIN][: (6 if pending else 3)]:
-            for b in BID_GRID:
+            for b in grid:
                 if b <= B:
                     extra = {} if pending else {"chopped0": sc["rid"]}
                     jobs.append(pol | {"budget": B, "force": {r["pid"]: b}, "_pid": r["pid"], "_bid": b, "_k": sc["rid"]} | extra)

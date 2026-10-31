@@ -558,11 +558,13 @@ def render(r, path=None):
         f'<tr><td class="num">{h["leg"]}</td><td class="num r">{h["alive"]}</td><td class="num r">${h["spent"]}</td>'
         f'<td class="num r">${h["burned"]}</td><td class="num r">${h["top_price"]}</td><td class="num r">{h["buyers"]}</td>'
         f'<td class="num r">${h["left"]:,}</td><td class="num r">${h["linear_left"]:,.0f}</td></tr>' for h in hist)
+    tn = pace.get("trade_net_me", 0)
+    traded = f" (you received ${tn})" if tn > 0 else f" (you sent ${-tn})" if tn < 0 else ""
     pace_box = f"""<section class="box"><h2>League FAAB pace <small>${pace['start_total']:,} at the start</small></h2><div class="inner">
   <div class="legend"><span><i style="background:var(--s3)"></i>actual</span><span><i style="background:var(--muted)"></i>even-spending pace</span><span><i style="background:var(--s4)"></i>model forecast</span></div>
   {pace_chart}
   <div class="tbl"><table><thead><tr><th>Wk</th><th class="r">Alive</th><th class="r">Spent</th><th class="r">Burned</th><th class="r">Top price</th><th class="r">Buyers</th><th class="r">Left</th><th class="r">Even pace</th></tr></thead><tbody>{pace_rows}</tbody></table></div>
-  <p class="note"><b>Burned</b> is the unspent FAAB a team takes with it when it's chopped. <b>Even pace</b> means every team spends its $200 evenly over the season's {pace['n_auctions']} auctions. FAAB sent in trades is counted (you received $45). The forecast comes from the power-ranking sims.</p>
+  <p class="note"><b>Burned</b> is the unspent FAAB a team takes with it when it's chopped. <b>Even pace</b> means every team spends its ${B0} evenly over the season's {pace['n_auctions']} auctions. FAAB sent in trades is counted{traded}. The forecast comes from the power-ranking sims.</p>
 </div></section>"""
 
     page = f"""<title>{esc(me)} Chop Sheet</title>

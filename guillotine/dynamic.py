@@ -21,7 +21,6 @@ from common import POS, THREADS, best_lineup, eligible, np
 from sim import _G, _pool_map, team_scores
 
 HORIZON = 4
-MAX_ROSTER = 15  # 13 active + 2 IR
 MIN_GAIN = 2.0   # I don't bid on players worth less than this many lineup points a week
 
 
@@ -70,7 +69,7 @@ def _auction(ctx, pool, alive, rosters, budget, my_bid, fut, leg, pr, boost, fit
         total += b
         top = max(top, b)
         rosters[t].append(p)
-        if len(rosters[t]) > MAX_ROSTER:
+        if len(rosters[t]) > ctx["max_roster"]:
             rosters[t].remove(min((q for q in rosters[t] if q != p), key=lambda q: ros_next[ix[q]]))
         if t == me:
             spent += b
@@ -85,7 +84,9 @@ def _paths_chunk(job):
     ix = U.ix
     ctx = {"me": base["me"], "bm": bm, "slots": U.lg.slots, "ix": ix, "pos_of": {p: U.pos[i] for p, i in ix.items()},
            "proj": [list(U.proj[wi]) for wi in range(W)],
-           "ros_val": [list(U.proj[wi:].sum(0)) for wi in range(W)] + [[0.0] * U.n]}
+           "ros_val": [list(U.proj[wi:].sum(0)) for wi in range(W)] + [[0.0] * U.n],
+           # bench + starters + IR, e.g. 13 + 2
+           "max_roster": len(U.lg.league["roster_positions"]) + (U.lg.league["settings"].get("reserve_slots") or 0)}
     proj, slots, pos_of, me = ctx["proj"], ctx["slots"], ctx["pos_of"], ctx["me"]
     rng = np.random.default_rng([seed, ci])
     draws = [(s, a) for _, s, a in U.paths(C, rng, 0)]

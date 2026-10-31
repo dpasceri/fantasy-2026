@@ -9,12 +9,20 @@ and fit a hurdle model
     log(bid) | bid > 0  = b0 + b1 * gain + b2 * log(budget) + b3 * leg + u_j + e,  e ~ N(0, s^2)
 v_j (how often j bids) and u_j (how hard j bids) are manager effects shrunk toward 0:
 v_j by a N(0, 1) prior, u_j by empirical Bayes. Bids are capped at the budget.
+
+A league with fewer than MIN_BIDS bids so far (new, or early in the season) can't support that fit, so it
+gets PRIOR: the same model fit on a 17-team $200 league (weeks 1-7, 142 bids), with no manager effects and
+budgets in units of the league's starting FAAB, so a $1000 league bids 5x the dollars.
 """
 from common import *  # noqa: F401,F403
 from common import League, POS, best_lineup, eligible, np
 from scipy.optimize import minimize
 
 HORIZON = 4
+MIN_BIDS = 20
+PRIOR = {"a": [-3.1959181701605246, 1.7018781859274152, -0.27955391252144474],
+         "beta": [-0.09015987071757711, 0.1765344719074891, 0.2882372787789881, 0.0852055796510904],
+         "sigma": 0.9287977672850494, "budget": 200}
 
 
 def _minelig(lg, roster, w, val=None):
@@ -103,6 +111,11 @@ class BidModel:
         self.lg = lg
         rows = [r for r in bid_history(lg) if r["budget"] > 0]
         self.rows = rows
+        self.ref, self.shift = 1.0, 0.0  # budget scale and log-bid shift; only the prior uses them
+        if sum(1 for r in rows if (r["bid"] or 0) > 0) < MIN_BIDS:
+            self._use_prior(rows)
+            return
+        self.prior = False
         rids = sorted({r["rid"] for r in rows})
         ri = {rid: k for k, rid in enumerate(rids)}
         R = np.array([ri[r["rid"]] for r in rows])
@@ -136,12 +149,23 @@ class BidModel:
         self.tau = float(np.sqrt(tau2))
         self.r2 = float(1 - res.var() / Y.var())
 
+    def _use_prior(self, rows):
+        self.prior = True
+        self.ref = PRIOR["budget"] / self.lg.budget
+        self.shift = -float(np.log(self.ref))
+        self.a, self.beta, self.sigma = np.array(PRIOR["a"]), np.array(PRIOR["beta"]), PRIOR["sigma"]
+        self.v, self.u, self.tau, self.r2 = {}, {}, 0.0, float("nan")
+        rids = {r["rid"] for r in rows}
+        self.n_bids = {rid: sum(1 for r in rows if r["rid"] == rid and (r["bid"] or 0) > 0) for rid in rids}
+        self.n_offered = {rid: sum(1 for r in rows if r["rid"] == rid) for rid in rids}
+
     def p_bid(self, rid, g, budget):
-        eta = self.a[0] + self.a[1] * np.log1p(g) + self.a[2] * np.log(max(budget, 1)) + self.v.get(rid, 0.0)
+        eta = self.a[0] + self.a[1] * np.log1p(g) + self.a[2] * np.log(max(budget * self.ref, 1)) + self.v.get(rid, 0.0)
         return 1 / (1 + np.exp(-eta))
 
     def mu(self, rid, g, budget, leg):
-        return self.beta[0] + self.beta[1] * g + self.beta[2] * np.log(max(budget, 1)) + self.beta[3] * leg + self.u.get(rid, 0.0)
+        return (self.beta[0] + self.shift + self.beta[1] * g + self.beta[2] * np.log(max(budget * self.ref, 1))
+                + self.beta[3] * leg + self.u.get(rid, 0.0))
 
     def median_bid(self, rid, g, budget, leg):
         return min(float(np.exp(self.mu(rid, g, budget, leg))), budget)
@@ -160,6 +184,7 @@ class BidModel:
             "size": {k: round(float(x), 3) for k, x in zip(("b0", "b_gain", "b_log_budget", "b_leg"), self.beta)}
             | {"sigma": round(self.sigma, 3), "tau": round(self.tau, 3), "r2": round(self.r2, 3)},
             "n_rows": len(self.rows), "n_bids": int(sum(1 for r in self.rows if (r["bid"] or 0) > 0)),
+            "prior": self.prior,
         }
 
 
