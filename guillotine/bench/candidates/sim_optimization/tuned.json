@@ -1,0 +1,404 @@
+{
+ "state_sig": "0549ea074558",
+ "ref": {
+  "m_early": 1.0,
+  "m_late": 0.75
+ },
+ "conditions": [
+  "",
+  "_stress",
+  "_bmboot"
+ ],
+ "variants": {
+  "ocba": {
+   "theta": {
+    "m_early": 0.9,
+    "m_late": 0.75
+   },
+   "family": "step",
+   "tune_d_vs_baseline": 0.00428,
+   "tune_se": 0.00195,
+   "tune_blocks": 51,
+   "seeds": [
+    2000,
+    2050
+   ]
+  },
+  "cma": {
+   "theta": {
+    "lm0": -0.0999,
+    "lm1": -0.1968,
+    "gam": 0.0384,
+    "gmin": 2.2946,
+    "kap": 0.0242,
+    "alpha": 0.8987
+   },
+   "family": "rich",
+   "pick": "gp_top3",
+   "tune_d_vs_baseline": 0.00867,
+   "tune_se": 0.00216,
+   "tune_blocks": 20,
+   "seeds": [
+    5500,
+    5519
+   ]
+  },
+  "bo": {
+   "theta": {
+    "lm0": 0.6784,
+    "lm1": 1.1866,
+    "gam": 0.2225,
+    "gmin": 1.0,
+    "kap": -0.6554,
+    "alpha": 0.5629
+   },
+   "family": "rich",
+   "pick": "gp_top2",
+   "tune_d_vs_baseline": -0.00579,
+   "tune_se": 0.00438,
+   "tune_blocks": 19,
+   "seeds": [
+    4500,
+    4518
+   ]
+  }
+ },
+ "searches": {
+  "cma_global": {
+   "theta": {
+    "lm0": -1.1488,
+    "lm1": 0.811,
+    "gam": 0.9804,
+    "gmin": 1.3169,
+    "kap": 0.8955,
+    "alpha": 0.9707
+   },
+   "family": "rich",
+   "pick": "rec",
+   "tune_d_vs_baseline": -0.00406,
+   "tune_se": 0.00634,
+   "tune_blocks": 16,
+   "seeds": [
+    3500,
+    3515
+   ]
+  }
+ },
+ "compute": {
+  "policy_blocks": {
+   "bank": 640,
+   "ocba": 521,
+   "cma_global": 360,
+   "bo": 363,
+   "cma": 412
+  },
+  "conditions_per_block": {
+   "bank": 1,
+   "ocba": 3,
+   "cma_global": 3,
+   "bo": 3,
+   "cma": 3
+  },
+  "wall_s": {
+   "bank": 211.7,
+   "ocba": 455.5,
+   "cma_global": 539.5,
+   "bo": 479.5,
+   "cma": 512.4
+  },
+  "slots": {
+   "bank": 2,
+   "ocba": 2,
+   "cma_global": 2,
+   "bo": 2,
+   "cma": 2
+  },
+  "note": "wall_s/slots are this cache's last build of each stage (blocks already cached cost nothing then); a block in all 3 conditions costs ~2.5 core-s"
+ },
+ "pcs": {
+  "truth": {
+   "grid": [
+    [
+     0.5,
+     0.75
+    ],
+    [
+     0.5,
+     1.0
+    ],
+    [
+     0.5,
+     1.5
+    ],
+    [
+     0.5,
+     2.0
+    ],
+    [
+     0.75,
+     0.75
+    ],
+    [
+     0.75,
+     1.0
+    ],
+    [
+     0.75,
+     1.5
+    ],
+    [
+     0.75,
+     2.0
+    ],
+    [
+     1.0,
+     0.75
+    ],
+    [
+     1.0,
+     1.0
+    ],
+    [
+     1.0,
+     1.5
+    ],
+    [
+     1.0,
+     2.0
+    ],
+    [
+     1.5,
+     0.75
+    ],
+    [
+     1.5,
+     1.0
+    ],
+    [
+     1.5,
+     1.5
+    ],
+    [
+     1.5,
+     2.0
+    ]
+   ],
+   "means": [
+    0.40962,
+    0.41125,
+    0.40437,
+    0.39812,
+    0.43275,
+    0.43137,
+    0.4185,
+    0.41012,
+    0.42487,
+    0.418,
+    0.40675,
+    0.40075,
+    0.347,
+    0.344,
+    0.34088,
+    0.33975
+   ],
+   "best": [
+    0.75,
+    0.75
+   ],
+   "gaps_sorted": [
+    0.0,
+    0.00138,
+    0.00788,
+    0.01425,
+    0.01475,
+    0.0215
+   ]
+  },
+  "R": 1000,
+  "rows": [
+   {
+    "budget_blocks": 64,
+    "paths_per_alt_uniform": 800,
+    "core_s": 46,
+    "procedure": "uniform (run.py)",
+    "pcs": 0.466,
+    "pgs_0.005": 0.743,
+    "eoc": 0.0033,
+    "used_blocks": 64.0
+   },
+   {
+    "budget_blocks": 64,
+    "paths_per_alt_uniform": 800,
+    "core_s": 46,
+    "procedure": "ocba_crn",
+    "pcs": 0.476,
+    "pgs_0.005": 0.75,
+    "eoc": 0.00308,
+    "used_blocks": 64.0
+   },
+   {
+    "budget_blocks": 128,
+    "paths_per_alt_uniform": 1600,
+    "core_s": 92,
+    "procedure": "uniform (run.py)",
+    "pcs": 0.562,
+    "pgs_0.005": 0.821,
+    "eoc": 0.00195,
+    "used_blocks": 128.0
+   },
+   {
+    "budget_blocks": 128,
+    "paths_per_alt_uniform": 1600,
+    "core_s": 92,
+    "procedure": "ocba_crn",
+    "pcs": 0.628,
+    "pgs_0.005": 0.892,
+    "eoc": 0.00147,
+    "used_blocks": 128.0
+   },
+   {
+    "budget_blocks": 128,
+    "paths_per_alt_uniform": 1600,
+    "core_s": 92,
+    "procedure": "kn_d0.005",
+    "pcs": 0.542,
+    "pgs_0.005": 0.788,
+    "eoc": 0.00237,
+    "used_blocks": 125.6
+   },
+   {
+    "budget_blocks": 128,
+    "paths_per_alt_uniform": 1600,
+    "core_s": 92,
+    "procedure": "kn_d0.01",
+    "pcs": 0.544,
+    "pgs_0.005": 0.814,
+    "eoc": 0.00197,
+    "used_blocks": 123.1
+   },
+   {
+    "budget_blocks": 256,
+    "paths_per_alt_uniform": 3200,
+    "core_s": 184,
+    "procedure": "uniform (run.py)",
+    "pcs": 0.664,
+    "pgs_0.005": 0.9,
+    "eoc": 0.00113,
+    "used_blocks": 256.0
+   },
+   {
+    "budget_blocks": 256,
+    "paths_per_alt_uniform": 3200,
+    "core_s": 184,
+    "procedure": "ocba_crn",
+    "pcs": 0.734,
+    "pgs_0.005": 0.97,
+    "eoc": 0.00068,
+    "used_blocks": 256.0
+   },
+   {
+    "budget_blocks": 256,
+    "paths_per_alt_uniform": 3200,
+    "core_s": 184,
+    "procedure": "kn_d0.005",
+    "pcs": 0.704,
+    "pgs_0.005": 0.914,
+    "eoc": 0.00097,
+    "used_blocks": 251.2
+   },
+   {
+    "budget_blocks": 256,
+    "paths_per_alt_uniform": 3200,
+    "core_s": 184,
+    "procedure": "kn_d0.01",
+    "pcs": 0.656,
+    "pgs_0.005": 0.936,
+    "eoc": 0.00089,
+    "used_blocks": 253.0
+   },
+   {
+    "budget_blocks": 400,
+    "paths_per_alt_uniform": 5000,
+    "core_s": 288,
+    "procedure": "uniform (run.py)",
+    "pcs": 0.69,
+    "pgs_0.005": 0.928,
+    "eoc": 0.0009,
+    "used_blocks": 400.0
+   },
+   {
+    "budget_blocks": 400,
+    "paths_per_alt_uniform": 5000,
+    "core_s": 288,
+    "procedure": "ocba_crn",
+    "pcs": 0.82,
+    "pgs_0.005": 0.98,
+    "eoc": 0.00043,
+    "used_blocks": 400.0
+   },
+   {
+    "budget_blocks": 400,
+    "paths_per_alt_uniform": 5000,
+    "core_s": 288,
+    "procedure": "kn_d0.005",
+    "pcs": 0.73,
+    "pgs_0.005": 0.95,
+    "eoc": 0.0007,
+    "used_blocks": 396.0
+   },
+   {
+    "budget_blocks": 400,
+    "paths_per_alt_uniform": 5000,
+    "core_s": 288,
+    "procedure": "kn_d0.01",
+    "pcs": 0.72,
+    "pgs_0.005": 0.984,
+    "eoc": 0.00049,
+    "used_blocks": 384.8
+   },
+   {
+    "budget_blocks": 800,
+    "paths_per_alt_uniform": 10000,
+    "core_s": 576,
+    "procedure": "uniform (run.py)",
+    "pcs": 0.822,
+    "pgs_0.005": 0.986,
+    "eoc": 0.00034,
+    "used_blocks": 800.0
+   },
+   {
+    "budget_blocks": 800,
+    "paths_per_alt_uniform": 10000,
+    "core_s": 576,
+    "procedure": "ocba_crn",
+    "pcs": 0.926,
+    "pgs_0.005": 0.988,
+    "eoc": 0.00025,
+    "used_blocks": 800.0
+   },
+   {
+    "budget_blocks": 800,
+    "paths_per_alt_uniform": 10000,
+    "core_s": 576,
+    "procedure": "kn_d0.005",
+    "pcs": 0.878,
+    "pgs_0.005": 1.0,
+    "eoc": 0.00017,
+    "used_blocks": 787.8
+   },
+   {
+    "budget_blocks": 800,
+    "paths_per_alt_uniform": 10000,
+    "core_s": 576,
+    "procedure": "kn_d0.01",
+    "pcs": 0.774,
+    "pgs_0.005": 0.994,
+    "eoc": 0.00035,
+    "used_blocks": 565.5
+   }
+  ],
+  "note": "bootstrap world of a 40-block bank (8000 paths per alternative, main condition): truth = the bank means",
+  "wall_s": 30.1,
+  "state_sig": "0549ea074558"
+ }
+}

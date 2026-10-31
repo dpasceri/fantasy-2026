@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""cpuq: run a command inside the box's shared 16-core CPU budget.
+
+    bench/cpuq -n K [--min M] [--timeout SECONDS] [--] cmd args...
+
+Every backtest on this machine goes through here. There are 16 slots, one per physical core
+(logical CPUs 8-15, then 4-7, then 3-0, one hardware thread each; the SMT siblings 16-31 stay free). cpuq blocks until K slots are free (or,
+with --min, takes as many as are free up to K once at least M are), pins the command to those
+cores (so it cannot use more than it was given whatever it spawns), sets the thread env vars to
+that count, runs it at nice 10, and kills its whole process group on timeout.
+Exit status is the command's (124 on timeout).
+"""
+import fcntl
+import os
+import signal
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SLOT_DIR = os.path.join(HERE, ".slots")
+# One thread on each of physical cores 8-15, then 4-7, then 3-0 (CPU 0, which takes most interrupts,
+# is used last). Slot i is always CPUS[i], so new cores go on the end and slots already held keep their CPU.
+CPUS = list(range(8, 16)) + list(range(4, 8)) + [3, 2, 1, 0]
+
+
+def acquire(k, kmin):
+    os.makedirs(SLOT_DIR, exist_ok=True)
+    waited = 0.0
+    while True:
+        with open(os.path.join(SLOT_DIR, ".mutex"), "w") as mx:
+            fcntl.flock(mx, fcntl.LOCK_EX)
+            held = []
+            for i, cpu in enumerate(CPUS):
+                f = open(os.path.join(SLOT_DIR, f"slot{i}"), "w")
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    held.append((f, cpu))
+                    if len(held) == k:
+                        return held
+                except BlockingIOError:
+                    f.close()
+            if len(held) >= kmin:
+                return held
+            for f, _ in held:
+                f.close()
+        if waited == 0.0:
+            print(f"[cpuq] waiting for {kmin} free core(s)...", file=sys.stderr, flush=True)
+        time.sleep(1.5)
+        waited += 1.5
+
+
+def main(argv):
+    k, kmin, timeout = 1, None, None
+    while argv and argv[0].startswith("-"):
+        a = argv.pop(0)
+        if a == "--":
+            break
+        if a == "-n":
+            k = int(argv.pop(0))
+        elif a == "--min":
+            kmin = int(argv.pop(0))
+        elif a == "--timeout":
+            timeout = float(argv.pop(0))
+        else:
+            sys.exit(f"cpuq: unknown option {a}")
+    if not argv:
+        sys.exit(__doc__)
+    k = max(1, min(k, len(CPUS)))
+    kmin = k if kmin is None else max(1, min(kmin, k))
+    held = acquire(k, kmin)
+    cpus = {c for _, c in held}
+    k = len(held)
+    env = dict(os.environ)
+    for v in ("GSIM_THREADS", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+              "NUMBA_NUM_THREADS", "POLARS_MAX_THREADS", "RAYON_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+        env[v] = str(k)
+    env["CPUQ_SLOTS"] = str(k)
+
+    def pre():
+        os.sched_setaffinity(0, cpus)
+        os.nice(10)
+
+    t0 = time.time()
+    p = subprocess.Popen(argv, env=env, preexec_fn=pre, start_new_session=True)
+    try:
+        rc = p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        print(f"[cpuq] killed after {timeout:.0f}s timeout", file=sys.stderr, flush=True)
+        rc = 124
+    except KeyboardInterrupt:
+        os.killpg(p.pid, signal.SIGKILL)
+        rc = 130
+    print(f"[cpuq] {k} core(s), {time.time() - t0:.1f}s, exit {rc}", file=sys.stderr, flush=True)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

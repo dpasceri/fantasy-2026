@@ -1,0 +1,141 @@
+{
+ "params": {
+  "shade": {
+   "k": 2.5,
+   "gamma": 0.5
+  },
+  "bayes": {
+   "k": 2.5,
+   "gamma": 0.5
+  },
+  "fp": {
+   "k": 2.5,
+   "gamma": 0.5
+  }
+ },
+ "objective": "mean p_win over main, _stress, _bmboot",
+ "seeds": [
+  1000,
+  1039
+ ],
+ "paths": 8000,
+ "grid": [
+  {
+   "k": null,
+   "gamma": null,
+   "p_win": 0.4328,
+   "p_win_stress": 0.4298,
+   "p_win_bmboot": 0.4326,
+   "avg3": 0.4317,
+   "d_avg3_vs_m0.75": 0.0,
+   "se": 0.0,
+   "avg_spend": 125.8
+  },
+  {
+   "k": 2.0,
+   "gamma": 0.0,
+   "p_win": 0.4338,
+   "p_win_stress": 0.4338,
+   "p_win_bmboot": 0.4377,
+   "avg3": 0.4351,
+   "d_avg3_vs_m0.75": 0.0034,
+   "se": 0.0025,
+   "avg_spend": 97.0
+  },
+  {
+   "k": 2.0,
+   "gamma": 0.5,
+   "p_win": 0.4373,
+   "p_win_stress": 0.4363,
+   "p_win_bmboot": 0.4379,
+   "avg3": 0.4371,
+   "d_avg3_vs_m0.75": 0.0054,
+   "se": 0.0026,
+   "avg_spend": 94.6
+  },
+  {
+   "k": 2.0,
+   "gamma": 1.0,
+   "p_win": 0.435,
+   "p_win_stress": 0.4363,
+   "p_win_bmboot": 0.4351,
+   "avg3": 0.4355,
+   "d_avg3_vs_m0.75": 0.0037,
+   "se": 0.0024,
+   "avg_spend": 93.3
+  },
+  {
+   "k": 2.5,
+   "gamma": 0.0,
+   "p_win": 0.4399,
+   "p_win_stress": 0.4373,
+   "p_win_bmboot": 0.4375,
+   "avg3": 0.4382,
+   "d_avg3_vs_m0.75": 0.0065,
+   "se": 0.0028,
+   "avg_spend": 110.1
+  },
+  {
+   "k": 2.5,
+   "gamma": 0.5,
+   "p_win": 0.445,
+   "p_win_stress": 0.4395,
+   "p_win_bmboot": 0.4429,
+   "avg3": 0.4425,
+   "d_avg3_vs_m0.75": 0.0107,
+   "se": 0.0028,
+   "avg_spend": 106.5
+  },
+  {
+   "k": 2.5,
+   "gamma": 1.0,
+   "p_win": 0.442,
+   "p_win_stress": 0.4399,
+   "p_win_bmboot": 0.4395,
+   "avg3": 0.4405,
+   "d_avg3_vs_m0.75": 0.0088,
+   "se": 0.0028,
+   "avg_spend": 103.9
+  },
+  {
+   "k": 3.0,
+   "gamma": 0.0,
+   "p_win": 0.4335,
+   "p_win_stress": 0.4375,
+   "p_win_bmboot": 0.429,
+   "avg3": 0.4333,
+   "d_avg3_vs_m0.75": 0.0016,
+   "se": 0.003,
+   "avg_spend": 121.2
+  },
+  {
+   "k": 3.0,
+   "gamma": 0.5,
+   "p_win": 0.44,
+   "p_win_stress": 0.4421,
+   "p_win_bmboot": 0.4374,
+   "avg3": 0.4398,
+   "d_avg3_vs_m0.75": 0.0081,
+   "se": 0.003,
+   "avg_spend": 116.9
+  },
+  {
+   "k": 3.0,
+   "gamma": 1.0,
+   "p_win": 0.437,
+   "p_win_stress": 0.4406,
+   "p_win_bmboot": 0.433,
+   "avg3": 0.4369,
+   "d_avg3_vs_m0.75": 0.0052,
+   "se": 0.0028,
+   "avg_spend": 113.3
+  }
+ ],
+ "bind": [
+  -0.46,
+  1.17
+ ],
+ "state_sig": "0549ea074558",
+ "runtime_s": 627.6,
+ "bind_note": "tune.py --bind on seeds 1000-1007: pooled MLE s=0 -> -0.458, s=1 -> 0.713"
+}

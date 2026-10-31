@@ -1,0 +1,146 @@
+# evt_order_stats (team track)
+
+**What.** Chop probabilities, team-total quantiles and the chop line computed analytically from the
+baseline's own player model, with no Monte Carlo. The model is refit per origin exactly like
+`_baseline_team`: `_baseline_player`'s bucketed actual/proj quantile tables and model.fit's one-factor
+Gaussian copula (`fit_copula`, team and game factors). Only the computation changes (`analytic.py`).
+
+- **Team totals.**
+  - `cf`: four cumulants per team. The mean is exact. The variance carries every same-NFL-team and
+    same-game pair covariance of the copula, by Mehler's Hermite expansion
+    Cov = Σ_k ρ^k c_k c'_k / k! (c_k = E[q(Φ(Z)) He_k(Z)], 10 terms). Third and fourth cumulants add over
+    players. A Cornish-Fisher quantile map (patched to stay increasing) turns them into a cdf.
+  - `conv`, `cal`: the exact pmf on a 0.25-point lattice. A team's players split into game groups,
+    which are independent under the copula. A group of several players is integrated over its game
+    factor and NFL-team factors by Gauss-Hermite quadrature (24 / 12 / 20 nodes), and its players
+    convolve conditionally. Everything runs in the Fourier domain, where a mixture over nodes is just a
+    mean of spectra (the conditional-independence recursion of the credit-portfolio literature).
+- **Chop and line.** P(i lowest) = ∫ f_i Π_{j≠i}(1 − F_j) dx on the lattice (midpoint survival per
+  bin), and the line cdf is 1 − Π_j(1 − F_j). This is the exact finite-N order statistic.
+  - No asymptotic extreme-value law is used. Normal minima reach the Gumbel limit only at rate
+    1/log N (Hall 1979), which is useless at N = 10-17.
+  - `conv`/`cal` add cross-team dependence. Team-total covariances come from shared NFL teams and
+    games (Hermite again). A one-factor Gaussian copula on the totals is fitted to their correlations
+    (λ ≈ 0.13-0.16) and integrated by 9-node Gauss-Hermite, with teams conditionally independent.
+- **`cal`.** Applies `conv` plus T' = m + β(μ − m) + κ(T − μ) in each league, where m is the league
+  mean of μ.
+  - β (spread of team means) and κ (dispersion) are fitted by penalized maximum likelihood of the chop
+    and the team totals in the last 12 training weeks' leagues (virtual r % 3 == 0, plus real).
+  - Each league weighs 8 / (leagues in its week), because a week's replicates share every player
+    outcome. The priors are log β ~ N(0, 0.15²) and log κ ~ N(0, 0.10²). Optimization is Nelder-Mead.
+
+**Why it might beat the MC baseline.**
+
+- No Monte Carlo noise. That helps totals' CRPS and Brier, and gives exact tails for the left-tail
+  event that decides a chop.
+- About 25-30 ms per league. That is cheap enough to calibrate the chop model by likelihood on
+  history (`cal`), which MC can't afford: every parameter value would need a new simulation.
+- An exact finite-N line distribution.
+- Honest prior: on the same model, MC at 96000 draws is already accurate (SE 0.001 at p = 0.1). The
+  real upside is `cal` plus speed for the season sim, not accuracy.
+
+**Findings from building it** (`verify.py`, pre-game data plus the fitted model only, 2025-10 / 2026-03 / 2026-07):
+
+- **Johnson SU is infeasible by moments.** Team totals have skew 0.24-0.39 and excess kurtosis
+  0.00-0.15. For 100% of teams that is below the lognormal line, which is Johnson's bounded SB
+  region. Hence Cornish-Fisher.
+- **Moment methods are fragile.** One 2026 QB bucket has a 19× ratio, so a 12-point QB has
+  q(1) = 235. One such player owns the team's third and fourth cumulants (γ₂ up to 18). Unpatched CF
+  had KL up to 0.033 vs MC and smoke log-loss +0.0125. `cf` therefore winsorizes each player at his
+  99% quantile first (`CF_CAP`). The lattice method is immune: its player lattice runs to the week's
+  largest quantile, clipped to 90-160 points.
+- **Cross-team correlation of totals** is 0.017-0.024 on average (Mehler 0.0170 vs MC 0.0171).
+  Ignoring it costs KL(MC‖·) ≈ 2-3e-4. The one-factor copula halves that to 1.1-1.3e-4. The MC noise
+  floor is (N−1)/(2S) ≈ 7e-5.
+- **`conv` vs the baseline's 96000 draws** on the same fit:
+  - |P(chop) diff| is 0.0022-0.0025 on average (max per league) and 0.0039 at most;
+  - team mean, sd and quantiles 5-95 agree within MC error;
+  - line quantiles agree to 0.1-0.2 points;
+  - doubling every Gauss-Hermite node count moves p by < 3e-5.
+- **`cf`** has KL 2.5-3.4e-4 and a left tail 0.15-0.19 points lower than MC at levels 1-5%.
+- **Speed** per league on 1 core: `cf` about 3 ms and `conv` 24-30 ms. The baseline needs 1.2-2.5 s
+  per week for its draws, plus a gather per league.
+- **`cal` fits:**
+
+  | Origin | β | κ |
+  |---|---|---|
+  | 2025-10 | 0.984 | 0.992 |
+  | 2026-03 | 0.980 | 1.020 |
+  | 2026-07 | 1.054 | 1.005 |
+
+  The penalized log-likelihood gains only 0.03-0.16 nats in effective units. The baseline is already
+  close to calibrated, so expect `cal` ≈ `conv`.
+
+**Sources.**
+
+- N. L. Johnson (1949), "Systems of frequency curves generated by methods of translation", *Biometrika* 36.
+  Also Hill, Hill & Holder (1976), AS 99, *Applied Statistics* 25, and H. Tuenter (2001), "An algorithm
+  to determine the parameters of SU-curves in the Johnson system of probability distributions by moment
+  matching", *J. Stat. Comput. Simul.* 70(4) 325-347. These cover the SU/SB moment regions; see
+  https://en.wikipedia.org/wiki/Johnson%27s_SU-distribution.
+- E. A. Cornish & R. A. Fisher (1938), "Moments and cumulants in the specification of distributions",
+  *Rev. Int. Stat. Inst.* 5, for the Cornish-Fisher expansion.
+- Mehler's formula and the Kibble-Slepian expansion for the correlation of transformed Gaussians
+  (https://en.wikipedia.org/wiki/Mehler_kernel). Also M. Cario & B. Nelson (1997), "Modeling and generating
+  random vectors with arbitrary marginal distributions and correlation matrix" (NORTA), Northwestern tech. report.
+- L. Andersen, J. Sidenius & S. Basu (2003), "All your hedges in one basket", *Risk* Nov 67-72
+  (https://www.risk.net/derivatives/credit-derivatives/1530334/all-your-hedges-one-basket). Also
+  P. Glasserman & J. Ruiz-Mata (2006), "Computing the credit loss distribution in the Gaussian copula
+  model: a comparison of methods", *J. Credit Risk* 2(4)
+  (https://business.columbia.edu/faculty/research/computing-credit-loss-distribution-gaussian-copula-model-comparison-methods).
+  Both cover factor conditioning, conditionally independent discretized loss distributions and quadrature.
+- P. Hall (1979), "On the rate of convergence of normal extremes", *J. Appl. Prob.* 16, 433-439, on
+  the 1/log n rate (see also https://arxiv.org/abs/2507.09496).
+- H. A. David & H. N. Nagaraja (2003), *Order Statistics*, 3rd ed., Wiley, for the minimum of
+  independent non-identical variables.
+- D. S. Hunter, J. P. Vielma & T. Zaman (2016), "Picking winners in daily fantasy sports using integer
+  programming" (https://arxiv.org/abs/1604.01455), on order statistics of fantasy team totals.
+
+**Variants.**
+
+| Variant | Team totals | Cross-team | Recalibration |
+|---|---|---|---|
+| `cf` | Cornish-Fisher from 4 cumulants (players winsorized at q99) | independent | none |
+| `conv` | exact lattice pmf under the copula | one-factor Gaussian copula, Gauss-Hermite | none |
+| `cal` | as `conv` | as `conv` | rolling (β, κ) by penalized ML |
+
+**Leakage and determinism.**
+
+- `fit` uses `train_df` and `train_leagues` only, which are strictly before the test week. `cal`
+  builds its training-week features from `train_df` rows of those weeks: pid, pos, proj, team and game,
+  all pre-game.
+- `predict` uses the pre-game league view and `week_df`.
+- No inj tags (p_out = 0, as in the baseline) and no data/ files.
+- There are no random numbers, apart from `fit_copula`'s fixed seed 7. No pools; numpy FFTs are
+  single-threaded.
+- `cal`'s features for training weeks use this origin's fit, so they are in-sample for those weeks.
+  That fit is only 5 copula numbers and about 50 bucket tables of about 500 rows each.
+
+**Runs.**
+
+- `verify.py`: `bench/cpuq -n 1 -- .venv/bin/python -m bench.candidates.evt_order_stats.verify [season week]`,
+  about 6-11 s.
+- `run_smoke.sh`: 25 s on 1 core for 3 variants × 3 origins.
+- `run_full.sh`: expect about 2-4 min on 6 cores. That is 63 tasks: `cal` about 10 s, `conv` about
+  2 s and `cf` under 1 s per origin.
+
+**Smoke result** (`leagues_sig` 41649c3a7b189438, same items as the baseline; Δ is the paired
+week-block bootstrap 95% CI from `compare team --mode smoke`, with only 3 blocks):
+
+| | Virtual logloss (Δ vs baseline) | Brier | crps_total | crps_line | Real logloss (n=2) |
+|---|---|---|---|---|---|
+| baseline | 2.0761 | 0.8250 | 10.943 | 5.545 | 1.851 |
+| `cf` | 2.0773 (+0.0012 [−0.0018, +0.0055]) | 0.8250 | 10.940 | 5.529 | 1.850 |
+| `conv` | 2.0741 (−0.0020 [−0.0055, +0.0013]) | 0.8246 | 10.937 | 5.547 | 1.850 |
+| `cal` | 2.0746 (−0.0015 [−0.0075, +0.0029]) | 0.8251 | 10.954 | 5.577 | 1.864 |
+
+Uniform logloss is 2.5879 virtual and 2.5530 real.
+
+**Known limits.**
+
+- The one-factor copula on totals ignores the heterogeneity of cross-team correlations (sd about
+  0.02), worth about 1e-4 nats.
+- Player mass above the lattice top (160) folds onto it. This only matters for that 235-point QB
+  tail, never for a chop.
+- `cf`'s winsorization changes the upper tail of the model.
+- `cal`'s n_eff = 8 per week and its priors are assumptions, not tuned.
