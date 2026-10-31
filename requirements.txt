@@ -1,0 +1,10 @@
+# Trade tools (top level) need only the standard library.
+# Guillotine simulator:
+numpy>=2.0
+scipy>=1.11
+
+# Backtest bench only (guillotine/bench):
+# pandas>=2.0
+# scikit-learn>=1.4
+# lightgbm>=4.0
+# statsmodels>=0.14
