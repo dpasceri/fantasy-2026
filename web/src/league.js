@@ -11,7 +11,8 @@ export const FLEX_OK = { FLEX: ["RB", "WR", "TE"], SUPER_FLEX: ["QB", "RB", "WR"
 // chance a player with this week's tag sits; Out/IR are already zeroed in projections (see common.py)
 export const P_OUT = { Questionable: 0.25, Doubtful: 0.99, Out: 1.0, IR: 1.0, PUP: 1.0, Sus: 1.0, NA: 1.0 };
 
-export const eligible = (slot, pos) => pos === slot || (FLEX_OK[slot] || []).includes(pos);
+const ELIG = new Map(Object.entries(FLEX_OK).map(([s, ps]) => [s, new Set(ps)]));
+export const eligible = (slot, pos) => pos === slot || (ELIG.has(slot) && ELIG.get(slot).has(pos));
 
 export class League {
   /** me: my roster id (number) or Sleeper display name. */
@@ -136,6 +137,20 @@ export class League {
   }
 }
 
+// The order bestLineup fills slots in, worked out once per slots array (the sims reuse the league's).
+const SLOT_ORDER = new WeakMap();
+function slotOrder(slots) {
+  let o = SLOT_ORDER.get(slots);
+  if (!o) {
+    const fixed = slots.filter((s) => POS.includes(s));
+    const flex = slots.filter((s) => !POS.includes(s)).map((s, i) => [s, i])
+      .sort((a, b) => (FLEX_OK[a[0]] || POS).length - (FLEX_OK[b[0]] || POS).length || a[1] - b[1]).map((x) => x[0]);
+    o = [...fixed, ...flex];
+    SLOT_ORDER.set(slots, o);
+  }
+  return o;
+}
+
 /**
  * Max-projection lineup. cands: [[value, pid, pos], ...].
  * Fixed slots first, then flex slots from most to least restrictive; greedy is optimal for nested flex sets.
@@ -144,11 +159,14 @@ export class League {
 export function bestLineup(slots, cands, withSubs = false) {
   const order = cands.filter((c) => c[0] > 0).sort((a, b) => b[0] - a[0]);
   const used = new Set(), lineup = [];
-  const fixed = slots.filter((s) => POS.includes(s));
-  const flex = slots.filter((s) => !POS.includes(s)).map((s, i) => [s, i])
-    .sort((a, b) => (FLEX_OK[a[0]] || POS).length - (FLEX_OK[b[0]] || POS).length || a[1] - b[1]).map((x) => x[0]);
-  for (const s of [...fixed, ...flex]) {
-    const pick = order.find((c) => !used.has(c[1]) && eligible(s, c[2]));
+  for (const s of slotOrder(slots)) {
+    let pick = null;
+    for (const c of order) {
+      if (!used.has(c[1]) && eligible(s, c[2])) {
+        pick = c;
+        break;
+      }
+    }
     if (pick) used.add(pick[1]);
     lineup.push([s, pick ? pick[1] : null]);
   }

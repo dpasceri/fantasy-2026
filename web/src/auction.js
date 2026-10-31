@@ -6,7 +6,7 @@
 // A league with fewer than MIN_BIDS bids gets PRIOR instead, with budgets in units of its starting FAAB.
 import { bestLineup, eligible, POS } from "./league.js";
 import { Rng } from "./rng.js";
-import { lstsq, mean, pyRound, quantileSorted, solveSPD, sortNum, variance } from "./stats.js";
+import { lstsq, mean, pyRound, quantileSorted, solveSPD, variance } from "./stats.js";
 
 export const HORIZON = 4;
 export const MIN_BIDS = 20;
@@ -41,14 +41,6 @@ export class Bids {
 
   median_bid(rid, g, budget, leg) {
     return Math.min(Math.exp(this.mu(rid, g, budget, leg)), budget);
-  }
-
-  /** One rival bid in whole dollars (0 = no bid). */
-  sample1(rid, g, budget, leg, rng, q = this.p_bid(rid, g, budget), m = this.mu(rid, g, budget, leg)) {
-    if (budget <= 0) return 0;
-    const bid = rng.random() < q;
-    const amt = Math.min(Math.round(Math.exp(m + this.sigma * rng.normal())), budget);
-    return bid ? amt : 0;
   }
 }
 
@@ -289,13 +281,30 @@ export function topRivalBids(bm, rivals, gains, leg, rng, n = 200000) {
   const top = new Float64Array(n);
   for (const [rid, budget] of rivals) {
     if (budget <= 0) continue;
-    const g = gains.get(rid), q = bm.p_bid(rid, g, budget), m = bm.mu(rid, g, budget, leg);
+    const g = gains.get(rid), q = bm.p_bid(rid, g, budget), m = bm.mu(rid, g, budget, leg), sigma = bm.sigma;
+    // one rival bid per draw: both random numbers are always taken (keeps the stream fixed); the amount, in whole
+    // dollars, is only worked out when the rival bids
     for (let i = 0; i < n; i++) {
-      const b = bm.sample1(rid, g, budget, leg, rng, q, m);
-      if (b > top[i]) top[i] = b;
+      const bids = rng.random() < q, z = rng.normal();
+      if (bids) {
+        const b = Math.min(Math.round(Math.exp(m + sigma * z)), budget);
+        if (b > top[i]) top[i] = b;
+      }
     }
   }
   return top;
+}
+
+/** Sorted copy of whole-dollar bids by counting (same result as sorting, without the sort). */
+export function sortDollars(top) {
+  let hi = 0;
+  for (const x of top) if (x > hi) hi = x;
+  const cnt = new Uint32Array(hi + 1);
+  for (const x of top) cnt[x]++;
+  const s = new Float64Array(top.length);
+  let k = 0;
+  for (let b = 0; b <= hi; b++) s.fill(b, k, (k += cnt[b]));
+  return s;
 }
 
 /** P(my bid b beats the top rival bid) for b = 0..maxBid. Ties count half (waiver order). */
@@ -330,7 +339,7 @@ export function priceBacktest(lg, bm, seed = 5) {
     if (!bids.length || Math.max(...bids.map((r) => r.bid)) < (15 * lg.budget) / 200) continue; // contested: $15+ in a $200 league
     const top = topRivalBids(bm, new Map(rs.map((r) => [r.rid, r.budget])), new Map(rs.map((r) => [r.rid, r.gain])), rs[0].leg, rng, 40000);
     const actual = Math.max(...bids.map((r) => r.bid));
-    const s = sortNum(top);
+    const s = sortDollars(top);
     let lt = 0, eq = 0;
     for (const x of top) {
       if (x < actual) lt++;

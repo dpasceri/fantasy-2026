@@ -1,12 +1,12 @@
 // Port of guillotine/run.py: run every sim and build the results object (same schema as out/results.json),
 // which report.js renders as the cheat sheet.
-import { BidModel, faabHistory, gain, priceBacktest, pWinCurve, topRivalBids } from "./auction.js";
+import { BidModel, faabHistory, gain, priceBacktest, pWinCurve, sortDollars, topRivalBids } from "./auction.js";
 import { addTotals, MIN_GAIN, summarize } from "./dynamic.js";
 import { bestLineup, POS } from "./league.js";
 import { fit, PlayerModel } from "./model.js";
 import { Rng } from "./rng.js";
 import { CHUNK, enumerateLineups, Universe } from "./sim.js";
-import { pyRound, quantileSorted, searchsorted, sortNum } from "./stats.js";
+import { pyRound, quantileSorted, searchsorted } from "./stats.js";
 
 export const BID_GRID = [0, 10, 20, 30, 45, 60, 80, 100, 125, 150, 165]; // in a $200 league; scaled to the league's FAAB
 export const STRESS = [0.7, 0.3]; // rivals bid ~2x as often (logit +0.7) and ~35% higher (log +0.3)
@@ -81,13 +81,24 @@ const key = (lu) => [...lu].sort().join(",");
 /** Season sims for a set of my roster variants (sim.py's SeasonPlan + run_season). */
 async function runSeason(pool, U, teams, rosters, me, variants, nSims, { seed = 1, alive0 = null, wi0 = 0, onDone } = {}) {
   const S = U.lg.slots.length, L = 3 * S, T = teams.length, V = variants.length, W = U.weeks.length;
-  const plan = { S, T, V, me_t: teams.indexOf(me), wi0, opp: {}, mine: {}, alive0: new Uint8Array(V * T).fill(1) };
+  // mine[wi] holds each distinct lineup once and mineOf[wi] maps variants to it: adding a bench-level player
+  // usually leaves the starters and subs unchanged, and an identical lineup scores identically
+  const plan = { S, T, V, me_t: teams.indexOf(me), wi0, opp: {}, mine: {}, mineOf: {}, alive0: new Uint8Array(V * T).fill(1) };
   if (alive0) alive0.forEach((row, v) => row.forEach((a, t) => { plan.alive0[v * T + t] = a ? 1 : 0; }));
   for (let wi = wi0; wi < W; wi++) {
     plan.opp[wi] = new Int32Array(T * L);
     teams.forEach((t, j) => plan.opp[wi].set(U.lineupIdx(wi, rosters.get(t), U.starters0.get(t)), j * L));
-    plan.mine[wi] = new Int32Array(V * L);
-    variants.forEach((r, v) => plan.mine[wi].set(U.lineupIdx(wi, r, U.starters0.get(me)), v * L));
+    const uniq = new Map(), rows = [];
+    plan.mineOf[wi] = Int32Array.from(variants, (r) => {
+      const idx = U.lineupIdx(wi, r, U.starters0.get(me)), k = idx.join();
+      if (!uniq.has(k)) {
+        uniq.set(k, rows.length);
+        rows.push(idx);
+      }
+      return uniq.get(k);
+    });
+    plan.mine[wi] = new Int32Array(rows.length * L);
+    rows.forEach((idx, u) => plan.mine[wi].set(idx, u * L));
   }
   await pool.set("plan", plan);
   const nChunks = Math.max(1, Math.floor(nSims / CHUNK));
@@ -226,6 +237,7 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
   const rng = new Rng(17);
   const scen = [];
   const nCurves = lab2.filter(([, i]) => i !== null).length;
+  const gcache = new Map(); // weakest starters per roster and week, shared by every player's gain
   let curves = 0;
   for (const [kk, plist] of cases) {
     const others = new Map(teams.filter((t) => t !== me && t !== kk).map((t) => [t, lg.faab(t)]));
@@ -234,13 +246,13 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
       if (k2 !== kk || i === null) continue;
       onProgress(++curves, nCurves);
       if (curves % 8 === 0) await new Promise((ok) => setTimeout(ok, 0)); // keep the page responsive
-      const gains = new Map([...others.keys()].map((t) => [t, gain(lg, ros.get(t), i, wLo, wLo + 3)]));
+      const gains = new Map([...others.keys()].map((t) => [t, gain(lg, ros.get(t), i, wLo, wLo + 3, gcache)]));
       const top = topRivalBids(bm, others, gains, bidLeg, rng, 60_000);
       const curve = pWinCurve(top, lg.faab(me));
-      const s = sortNum(top);
+      const s = sortDollars(top);
       rows.push({
         pid: i, player: lg.label(i), pos: lg.pos(i), inj: (lg.info[i] || {}).inj ?? null,
-        gain_me: pyRound(gain(lg, ros.get(me), i, wLo, wLo + 3), 2), d_win_static: S2.win(v, meT) - baseWin.get(kk),
+        gain_me: pyRound(gain(lg, ros.get(me), i, wLo, wLo + 3, gcache), 2), d_win_static: S2.win(v, meT) - baseWin.get(kk),
         rival_top: Object.fromEntries([0.5, 0.8, 0.9, 0.95].map((q) => [String(q), quantileSorted(s, q)])),
         p_no_rival_bid: top.filter((x) => x === 0).length / top.length,
         p_beat_rivals: Object.fromEntries(grid.filter((b) => b <= lg.faab(me)).map((b) => [String(b), curve[b]])),

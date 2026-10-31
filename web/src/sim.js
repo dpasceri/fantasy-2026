@@ -204,8 +204,8 @@ function scratch(U) {
 }
 
 /**
- * Season / elimination sims for one chunk. plan: {S, T, V, me_t, wi0, alive0: Uint8Array(V*T),
- * opp: {wi: Int32Array(T*3*S)}, mine: {wi: Int32Array(V*3*S)}}. Returns sums to be added across chunks.
+ * Season / elimination sims for one chunk. plan: {S, T, V, me_t, wi0, alive0: Uint8Array(V*T), mineOf: {wi: variant -> row},
+ * opp: {wi: Int32Array(T*3*S)}, mine: {wi: Int32Array(rows*3*S)}}. Returns sums to be added across chunks.
  */
 export function seasonChunk(U, plan, ci, C, seed) {
   const { S, T, V, me_t, wi0 } = plan, W = U.W, L = 3 * S;
@@ -213,7 +213,7 @@ export function seasonChunk(U, plan, ci, C, seed) {
   const chops = new Float64Array(V * T * W), wins = new Float64Array(V * T);
   const lineHist = new Float64Array(W * 400), myHist = new Float64Array(W * 400);
   const { score, avail, G, T: TT } = scratch(U);
-  const alive = new Uint8Array(V * T), opp = new Float64Array(T), mine = new Float64Array(V);
+  const alive = new Uint8Array(V * T), opp = new Float64Array(T), mine = new Float64Array(V), uniq = new Float64Array(V);
   for (let c = 0; c < C; c++) {
     alive.set(plan.alive0);
     const st = pathState(U.n);
@@ -222,9 +222,10 @@ export function seasonChunk(U, plan, ci, C, seed) {
       for (let t = 0; t < T; t++) nAlive += alive[t];
       if (nAlive <= 1) break;
       drawWeek(U, wi, rng, st, score, avail, G, TT);
-      const oi = plan.opp[wi], mi = plan.mine[wi];
+      const oi = plan.opp[wi], mi = plan.mine[wi], of = plan.mineOf[wi], U1 = mi.length / L;
       for (let t = 0; t < T; t++) opp[t] = teamScore(score, avail, oi, t * L, S);
-      for (let v = 0; v < V; v++) mine[v] = teamScore(score, avail, mi, v * L, S);
+      for (let u = 0; u < U1; u++) uniq[u] = teamScore(score, avail, mi, u * L, S);
+      for (let v = 0; v < V; v++) mine[v] = uniq[of[v]];
       const wasAlive = alive[me_t] === 1; // variant 0, going into this week
       for (let v = 0; v < V; v++) {
         let k = -1, lo = Infinity;

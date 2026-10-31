@@ -8,7 +8,7 @@ export function makeEngine() {
   const state = {};
   return {
     set(key, value) {
-      if (key === "dyn") value = { ...value, ctx: { ...value.ctx, bm: new Bids(value.ctx.bm) } };
+      if (key === "dyn") value = { ...value, ctx: { ...value.ctx, bm: new Bids(value.ctx.bm) }, mcache: new Map() };
       state[key] = value;
     },
     run(kind, job) {
