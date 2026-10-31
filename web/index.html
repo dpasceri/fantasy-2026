@@ -18,7 +18,7 @@
   <div class="meta">runs on your computer<br>nothing is uploaded</div>
 </header>
 
-<div class="board">
+<div class="board controls">
 <section class="box"><h2>Your league</h2><div class="inner">
   <form id="league-form" class="row">
     <label for="league-id">Sleeper league ID or URL</label>
@@ -35,8 +35,12 @@
     <select id="team"></select>
     <button id="run" type="button" disabled>Run sims</button>
   </div>
+  <label class="check"><input type="checkbox" id="full"> Full precision (8× the sims; several minutes on a laptop)</label>
   <p class="note" id="league-facts"></p>
-  <p class="note">The simulator is being ported to the browser. Loading and checking your league works now; the sims come next.</p>
+  <div id="progress" hidden>
+    <progress id="progress-bar" max="1" value="0"></progress>
+    <p class="note" id="progress-label"></p>
+  </div>
 </div></section>
 
 <section class="box"><h2>Supported leagues</h2><div class="inner">
@@ -45,6 +49,10 @@
   <p class="note">Open source: <a href="https://github.com/dpasceri/fantasy-2026">github.com/dpasceri/fantasy-2026</a></p>
 </div></section>
 </div>
+
+<section class="box" id="sheet-box" hidden><h2>Your chop sheet <small><a id="download" href="#">download</a></small></h2>
+  <iframe id="sheet" title="Chop sheet"></iframe>
+</section>
 </div>
 <script type="module" src="src/app.js"></script>
 </body>
