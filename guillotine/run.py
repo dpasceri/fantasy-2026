@@ -24,6 +24,9 @@ STRESS = (0.7, 0.3)  # rivals bid ~2x as often (logit +0.7) and ~35% higher (log
 # my bid multiplier, fixed: the sweep's cells tie within noise and its argmax chased that noise; 0.75x all
 # season held up best on fresh seeds (bench/RESULTS.md). The sweep stays on the sheet for context.
 POLICY = {"m_early": 0.75, "m_late": 0.75, "switch_week": 12}
+# ...unless another style beats it by this many standard errors in this league (unpaired, so conservative; it also
+# guards against picking the luckiest of 16 cells). Tuned leagues tie within noise and keep 0.75x.
+SWITCH_Z = 3.0
 
 
 def fa_candidates(lg, exclude, per_pos=None):
@@ -229,6 +232,9 @@ def main():
     best = max(D1, key=lambda r: r["p_win"])
     pol = dict(POLICY)
     used = next(d for d in D1 if (d["m_early"], d["m_late"]) == (pol["m_early"], pol["m_late"]))
+    if best["p_win"] - used["p_win"] > SWITCH_Z * np.hypot(best["se"], used["se"]):
+        pol = {k: best[k] for k in POLICY}
+        used = best
     tick("dynamic: aggression sweep")
     budgets = sorted({B, 0} | {max(B - d, 0) for d in budget_steps(lg.budget)}, reverse=True)
     bud_set = [pol | {"budget": b} for b in budgets] + [pol | {"budget": b, "rival_boost": STRESS} for b in budgets]
@@ -308,7 +314,8 @@ def main():
         "free_agents": fa_rows,
         "scenarios": scen,
         "dynamic": {"sweep": D1, "budgets": [d for d in D2 if "rival_boost" not in d],
-                    "budgets_stress": [d for d in D2 if "rival_boost" in d], "best": best, "used": used, "stress": STRESS},
+                    "budgets_stress": [d for d in D2 if "rival_boost" in d], "best": best, "used": used, "stress": STRESS,
+                    "default": POLICY},
         "bid_model": bm.summary() | {"managers": [
             {"owner": lg.owner(t), "faab": lg.faab(t), "bids_often": round(bm.v.get(t, 0), 2), "bids_hard": round(bm.u.get(t, 0), 2),
              "n_bids": bm.n_bids.get(t, 0), "n_chances": bm.n_offered.get(t, 0)} for t in teams]},

@@ -320,6 +320,11 @@ def render(r, path=None):
         calls.append(("Free pickup", f"Add <b>{esc(f0['player'])}</b> now. He costs $0 (waivers have cleared) and adds <b>{pp(f0['d_win'])}</b> to your chance to win the league.{extra}"))
     when = "all season" if used["m_early"] == used["m_late"] else f"before week 12, {used['m_late']:g}× after"
     money = f"Bid about <b>{used['m_early']:g}×</b> what a typical manager in this league would bid for the same lineup gain, {when}."
+    dflt = D.get("default") or {}
+    d0 = next((d for d in D["sweep"] if (d["m_early"], d["m_late"]) == (dflt.get("m_early"), dflt.get("m_late"))), None)
+    if d0 is not None and (d0["m_early"], d0["m_late"]) != (used["m_early"], used["m_late"]):
+        money += (f" That's not the usual {d0['m_early']:g}×: in this league's sims it clearly wins more often "
+                  f"({pct(used['p_win'])} vs {pct(d0['p_win'])} to win the league).")
     if worst_aggr and used["p_win"] - worst_aggr["p_win"] >= 0.005:
         money += f" Bidding 1.5× early drops your win chance by up to {100 * (used['p_win'] - worst_aggr['p_win']):.0f} pts."
     segs = []

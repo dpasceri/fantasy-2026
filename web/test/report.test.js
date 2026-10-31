@@ -48,6 +48,10 @@ def variant(name):
         r["faab_pace"]["start_total"] *= 5
         for x in r["power"]:
             x["faab"] *= 5
+    elif name == "switched_policy":  # this league's sims clearly favor another bidding style
+        D = r["dynamic"]
+        D["default"] = {"m_early": 0.75, "m_late": 0.75, "switch_week": 12}
+        D["used"] = D["best"] = next(d for d in D["sweep"] if (d["m_early"], d["m_late"]) == (0.5, 0.75))
     elif name == "no_history":
         r["faab_pace"]["history"] = []
     with tempfile.TemporaryDirectory() as d:
@@ -55,7 +59,7 @@ def variant(name):
             return {"r": r, "html": f.read()}
 
 names = ["base", "prior", "pending", "no_live", "live_in_progress", "no_used", "me_first", "me_last", "no_history",
-         "no_faab", "priced_out", "budget_1000"]
+         "no_faab", "priced_out", "budget_1000", "switched_policy"]
 print(json.dumps({"css": report.CSS, "variants": {n: variant(n) for n in names}}))
 `;
 

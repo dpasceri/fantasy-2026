@@ -12,6 +12,9 @@ export const BID_GRID = [0, 10, 20, 30, 45, 60, 80, 100, 125, 150, 165]; // in a
 export const STRESS = [0.7, 0.3]; // rivals bid ~2x as often (logit +0.7) and ~35% higher (log +0.3)
 // my bid multiplier, fixed: the sweep's cells tie within noise; 0.75x all season held up best (bench/RESULTS.md)
 export const POLICY = { m_early: 0.75, m_late: 0.75, switch_week: 12 };
+// ...unless another style beats it by this many standard errors in this league (unpaired, so conservative; it also
+// guards against picking the luckiest of 16 cells). Tuned leagues tie within noise and keep 0.75x.
+export const SWITCH_Z = 3.0;
 const PATH_CHUNK = 200;
 
 export function faCandidates(lg, exclude, perPos = { QB: 3, RB: 10, WR: 10, TE: 6 }) {
@@ -270,8 +273,12 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
   for (const a of [0.5, 0.75, 1.0, 1.5]) for (const b of [0.75, 1.0, 1.5, 2.0]) sweep.push({ m_early: a, m_late: b, switch_week: 12, budget: B });
   const D1 = await runDynamic(pool, sweep, 10_000 / k, 11, onProgress);
   const best = D1.reduce((x, y) => (y.p_win > x.p_win ? y : x));
-  const pol = { ...POLICY };
-  const used = D1.find((d) => d.m_early === pol.m_early && d.m_late === pol.m_late);
+  let pol = { ...POLICY };
+  let used = D1.find((d) => d.m_early === pol.m_early && d.m_late === pol.m_late);
+  if (best.p_win - used.p_win > SWITCH_Z * Math.hypot(best.se, used.se)) {
+    pol = Object.fromEntries(Object.keys(POLICY).map((k) => [k, best[k]]));
+    used = best;
+  }
   tick("dynamic: aggression sweep");
   stage("Value of a FAAB dollar");
   const budgets = [...new Set([B, 0, ...budgetSteps(lg.budget).map((d) => Math.max(B - d, 0))])].sort((a, b) => b - a);
@@ -342,7 +349,8 @@ export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStag
     labels,
     lineups: [...lineupRows.slice(0, 10), ...lineupRows.slice(10).filter((r) => r.is_current || r.is_proj_opt)],
     n_lineups: lineupRows.length, free_agents: faRows, scenarios: scen,
-    dynamic: { sweep: D1, budgets: D2.filter((d) => !("rival_boost" in d)), budgets_stress: D2.filter((d) => "rival_boost" in d), best, used, stress: STRESS },
+    dynamic: { sweep: D1, budgets: D2.filter((d) => !("rival_boost" in d)), budgets_stress: D2.filter((d) => "rival_boost" in d), best, used, stress: STRESS,
+      default: POLICY },
     bid_model: { ...bm.summary(), managers: teams.map((t) => ({ owner: lg.owner(t), faab: lg.faab(t), bids_often: pyRound(bm.vm.get(t) || 0, 2),
       bids_hard: pyRound(bm.um.get(t) || 0, 2), n_bids: bm.n_bids[t] || 0, n_chances: bm.n_offered[t] || 0 })) },
     price_backtest: priceBacktest(lg, bm), model_report: modelReport, backtest: null,

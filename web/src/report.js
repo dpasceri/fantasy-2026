@@ -237,6 +237,11 @@ export function render(r, { css } = {}) {
   }
   const when = used.m_early === used.m_late ? "all season" : `before week 12, ${fmtG(used.m_late)}× after`;
   let money = `Bid about <b>${fmtG(used.m_early)}×</b> what a typical manager in this league would bid for the same lineup gain, ${when}.`;
+  const dflt = D.default || {};
+  const d0 = D.sweep.find((d) => d.m_early === dflt.m_early && d.m_late === dflt.m_late);
+  if (d0 && (d0.m_early !== used.m_early || d0.m_late !== used.m_late))
+    money += ` That's not the usual ${fmtG(d0.m_early)}×: in this league's sims it clearly wins more often `
+      + `(${pct(used.p_win)} vs ${pct(d0.p_win)} to win the league).`;
   if (worstAggr && used.p_win - worstAggr.p_win >= 0.005) {
     money += ` Bidding 1.5× early drops your win chance by up to ${f0(100 * (used.p_win - worstAggr.p_win))} pts.`;
   }
