@@ -1,6 +1,5 @@
-/* The front page: plain text, one column. The cheat sheet itself (in the iframe) uses sheet.css. */
-:root { color-scheme: light dark; --fg: #000; --bg: #fff; --dim: #666; --line: #ccc; --bad: #c00; }
-@media (prefers-color-scheme: dark) { :root { --fg: #ddd; --bg: #111; --dim: #888; --line: #333; --bad: #f66; } }
+/* The front page: dark, plain text, one column. The cheat sheet itself (in the iframe) uses sheet.css. */
+:root { color-scheme: dark; --fg: #ddd; --bg: #111; --dim: #888; --line: #333; --bad: #f85149; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
