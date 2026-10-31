@@ -16,8 +16,6 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 #status ul { margin: 6px 0 0; padding-left: 20px; }
 a { color: var(--you); }
 .box > h2 small a { color: inherit; }
-.check { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
-.check input { min-height: 0; width: 18px; height: 18px; margin: 0; }
 #progress { margin-top: 12px; }
 #progress-bar { width: 100%; height: 10px; accent-color: var(--you); }
 #sheet-box { overflow: hidden; }

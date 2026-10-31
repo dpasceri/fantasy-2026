@@ -29,14 +29,28 @@ export class Bids {
     return { a, beta, sigma, v, u, ref, shift };
   }
 
+  /** The parts of p_bid and mu that don't depend on the gain, for one manager, budget and week. */
+  terms(rid, budget, leg) {
+    const lb = Math.log(Math.max(budget * this.ref, 1));
+    return { a0: this.a[0], a1: this.a[1], a2: this.a[2] * lb, v: this.vm.get(rid) || 0,
+      b0: this.beta[0] + this.shift, b1: this.beta[1], b2: this.beta[2] * lb, b3: this.beta[3] * leg, u: this.um.get(rid) || 0 };
+  }
+
+  // Same sums in the same order whether called through p_bid/mu or with precomputed terms, so results are identical.
+  static q(c, g) {
+    return 1 / (1 + Math.exp(-(c.a0 + c.a1 * Math.log1p(g) + c.a2 + c.v)));
+  }
+
+  static m(c, g) {
+    return c.b0 + c.b1 * g + c.b2 + c.b3 + c.u;
+  }
+
   p_bid(rid, g, budget) {
-    const eta = this.a[0] + this.a[1] * Math.log1p(g) + this.a[2] * Math.log(Math.max(budget * this.ref, 1)) + (this.vm.get(rid) || 0);
-    return 1 / (1 + Math.exp(-eta));
+    return Bids.q(this.terms(rid, budget, 0), g);
   }
 
   mu(rid, g, budget, leg) {
-    return this.beta[0] + this.shift + this.beta[1] * g + this.beta[2] * Math.log(Math.max(budget * this.ref, 1)) +
-      this.beta[3] * leg + (this.um.get(rid) || 0);
+    return Bids.m(this.terms(rid, budget, leg), g);
   }
 
   median_bid(rid, g, budget, leg) {

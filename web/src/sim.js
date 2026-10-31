@@ -159,6 +159,7 @@ export function drawWeek(U, wi, rng, st, score, avail, G, T) {
   const n = U.n, g = U.game_share, sg = Math.sqrt(g), st1 = Math.sqrt(1 - g);
   const ng = U.n_game[wi], nt = U.n_team[wi], game = U.game[wi], team = U.team[wi], q = U.qflat[wi];
   const load = U.load, cload = U.cload, loglev = st.loglev, outLeft = st.outLeft;
+  const pOut = U.p_out, haz = U.haz, pLong = U.p_long, pGeo = U.p_geo, locked = U.anyLocked, started = U.started;
   for (let j = 0; j < ng; j++) G[j] = sg * rng.normal();
   for (let j = 0; j < nt; j++) T[j] = st1 * rng.normal();
   const drift = wi > 0 ? -0.5 * LEVEL_STEP * LEVEL_STEP * wi : 0;
@@ -168,16 +169,16 @@ export function drawWeek(U, wi, rng, st, score, avail, G, T) {
     let s = q[b] + fr * (q[b + 1] - q[b]);
     let a;
     if (wi === 0) {
-      a = rng.random() >= U.p_out[i];
-      if (U.anyLocked && U.started[i]) {
+      a = rng.random() >= pOut[i];
+      if (locked && started[i]) {
         s = U.pts0[i] + U.frac_left[i] * s;
         a = true;
       }
     } else {
       loglev[i] += rng.normal() * LEVEL_STEP;
       s *= Math.exp(loglev[i] + drift);
-      if (outLeft[i] === 0 && rng.random() < U.haz[i])
-        outLeft[i] = rng.random() < U.p_long[i] ? INJ_LONG_WEEKS : rng.geometric(U.p_geo[i]);
+      if (outLeft[i] === 0 && rng.random() < haz[i])
+        outLeft[i] = rng.random() < pLong[i] ? INJ_LONG_WEEKS : rng.geometric(pGeo[i]);
       a = outLeft[i] === 0;
       if (outLeft[i] > 0) outLeft[i]--;
     }

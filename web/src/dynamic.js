@@ -5,9 +5,10 @@
 // fitted bid model; I bid m x the league's typical bid for my gain. Highest bid wins and pays its bid, claims
 // are processed from the highest bid down, budgets and the roster cap are enforced.
 //
-// This file runs inside workers: env holds plain data only (see run.js), plus `mcache`, the worker's cache of
-// weakest-starter lookups. Both caches here return exactly what recomputing would: they're keyed on everything
-// the value depends on, including roster order (it breaks ties between equal projections).
+// This file runs inside workers: env holds plain data only (see run.js), plus the worker's caches: `ids` numbers
+// each distinct roster (players in order, which also breaks ties between equal projections) and `mcache` holds
+// weakest-starter lookups by roster number and week. Every cache returns exactly what recomputing would.
+import { Bids } from "./auction.js";
 import { bestLineup, eligible, POS } from "./league.js";
 import { Rng } from "./rng.js";
 import { drawWeek, pathState, teamScore } from "./sim.js";
@@ -26,41 +27,50 @@ function minelig(slots, roster, projw, posOf, ix) {
   return out;
 }
 
-/** minelig for a roster (by its key) in week w2: depends only on the roster and that week's projections. */
-function mineligCached(ctx, mcache, roster, rkey, w2) {
-  const key = `${w2}|${rkey}`;
-  let v = mcache.get(key);
-  if (v === undefined) {
-    if (mcache.size > 400_000) mcache.clear();
-    v = minelig(ctx.slots, roster, ctx.proj[w2], ctx.posOf, ctx.ix);
-    mcache.set(key, v);
-  }
-  return v;
+function intern(ids, key) {
+  let id = ids.get(key);
+  if (id === undefined) ids.set(key, (id = ids.size));
+  return id;
 }
 
-/** One waiver run, in place (rosters and their keys). Returns [my spend, my studs, league spend, top price]. */
-function auction(ctx, mcache, pool, alive, rosters, keys, budget, myBid, fut, leg, pr, boost, fittedMe) {
-  const { me, proj, posOf, ix, bm } = ctx;
-  const rosNext = ctx.rosVal[fut[0]];
+/** Weakest starter by position for team t's roster in week w2 (depends only on the roster and the week). */
+function weakest(env, R, t, w2) {
+  const { ctx } = env, id = R.ids.get(t);
+  let byWeek = env.mcache.get(id);
+  if (!byWeek) env.mcache.set(id, (byWeek = new Array(env.U.W)));
+  return (byWeek[w2] ??= minelig(ctx.slots, R.rosters.get(t), ctx.proj[w2], ctx.posOf, ctx.ix));
+}
+
+/**
+ * One waiver run, in place. R = {rosters, ids, owned} for this path: rosters start as the shared base arrays and
+ * are copied the first time an auction changes them. Returns [my spend, my studs, league spend, top price].
+ */
+function auction(env, pool, alive, R, budget, myBid, fut, leg, pr, boost, fittedMe) {
+  const { me, proj, posOf, ix, bm } = env.ctx;
+  const rosNext = env.ctx.rosVal[fut[0]], F = fut.length;
+  const pI = pool.map((p) => ix.get(p)), pP = pool.map((p) => posOf.get(p));
   const claims = [];
   for (const t of alive) {
-    const el = budget.get(t) > 0 ? fut.map((w2) => mineligCached(ctx, mcache, rosters.get(t), keys.get(t), w2)) : null;
-    for (const p of pool) {
+    const bt = budget.get(t);
+    const el = bt > 0 ? fut.map((w2) => weakest(env, R, t, w2)) : null;
+    const c = el && (t !== me || fittedMe) ? bm.terms(t, bt, leg) : null;
+    const q0 = c ? Bids.q(c, 0) : 0; // most players add nothing to most lineups
+    for (let j = 0; j < pool.length; j++) {
       const uPart = pr.random(), z = pr.normal(), uTie = pr.random(); // always drawn: keeps paths aligned
       if (!el) continue;
-      const P = posOf.get(p), i = ix.get(p);
+      const P = pP[j], i = pI[j];
       let g = 0;
-      fut.forEach((w2, k) => { g += Math.max(0, proj[w2][i] - el[k][P]); });
-      g /= fut.length;
+      for (let k = 0; k < F; k++) g += Math.max(0, proj[fut[k]][i] - el[k][P]);
+      g /= F;
       let b;
-      if (t === me && !fittedMe) b = myBid(p, g);
+      if (t === me && !fittedMe) b = myBid(pool[j], g);
       else {
-        let q = bm.p_bid(t, g, budget.get(t));
+        let q = g === 0 ? q0 : Bids.q(c, g);
         if (boost[0]) q = 1 / (1 + Math.exp(-(Math.log(q / (1 - q)) + boost[0])));
-        b = uPart < q ? Math.round(Math.exp(bm.mu(t, g, budget.get(t), leg) + boost[1] + bm.sigma * z)) : 0;
+        b = uPart < q ? Math.round(Math.exp(Bids.m(c, g) + boost[1] + bm.sigma * z)) : 0;
       }
-      b = Math.min(b, budget.get(t));
-      if (b >= 1) claims.push([b, uTie, t, p, g]);
+      b = Math.min(b, bt);
+      if (b >= 1) claims.push([b, uTie, t, pool[j], g]);
     }
   }
   claims.sort((x, y) => y[0] - x[0] || y[1] - x[1]);
@@ -72,14 +82,18 @@ function auction(ctx, mcache, pool, alive, rosters, keys, budget, myBid, fut, le
     budget.set(t, budget.get(t) - b);
     total += b;
     top = Math.max(top, b);
-    const r = rosters.get(t);
+    let r = R.rosters.get(t);
+    if (!R.owned.has(t)) {
+      R.rosters.set(t, (r = [...r]));
+      R.owned.add(t);
+    }
     r.push(p);
-    if (r.length > ctx.maxRoster) {
+    if (r.length > env.ctx.maxRoster) {
       let drop = -1;
       for (let j = 0; j < r.length; j++) if (r[j] !== p && (drop < 0 || rosNext[ix.get(r[j])] < rosNext[ix.get(r[drop])])) drop = j;
       r.splice(drop, 1);
     }
-    keys.set(t, r.join(","));
+    R.ids.set(t, intern(env.ids, r.join(",")));
     if (t === me) {
       spent += b;
       studs += g >= 8 ? 1 : 0;
@@ -113,7 +127,11 @@ export function pathsChunk(env, job) {
   const rng = new Rng(seed, ci);
   const { score, avail } = drawPaths(U, C, rng);
   const T = base.teams.length, tix = new Map(base.teams.map((t, i) => [t, i]));
-  const mcache = env.mcache, baseKeys = new Map(base.teams.map((t) => [t, base.rosters[t].join(",")]));
+  if (env.ids.size > 300_000) { // between jobs only: no path holds an old roster number now
+    env.ids.clear();
+    env.mcache.clear();
+  }
+  const baseIds = new Map(base.teams.map((t) => [t, intern(env.ids, base.rosters[t].join(","))]));
   // a team's lineup score this week on path c depends only on its roster: settings share it until they diverge
   const lcache = Array.from({ length: W }, () => new Map());
   // week 0 under way: lineups are partly locked, so score every team's lock-aware lineup on all paths at once
@@ -134,8 +152,7 @@ export function pathsChunk(env, job) {
     const uMe = bm.um.get(me) || 0;
     for (let c = 0; c < C; c++) {
       const pr = new Rng(seed, ci, c, 1);
-      const rosters = new Map(base.teams.map((t) => [t, [...base.rosters[t]]]));
-      const keys = new Map(baseKeys);
+      const R = { rosters: new Map(base.teams.map((t) => [t, base.rosters[t]])), ids: new Map(baseIds), owned: new Set() };
       const budget = new Map(base.teams.map((t) => [t, base.budget[t]]));
       budget.set(me, st.budget);
       const alive = [...base.teams];
@@ -147,7 +164,7 @@ export function pathsChunk(env, job) {
       const forced = (wk) => (p, g) => (p in force ? force[p] : policy(p, g, wk));
       if (base.pending_pool) {
         const wk = weeks[0] - 1;
-        const r = auction(ctx, mcache, base.pending_pool, alive, rosters, keys, budget, forced(wk), [0, 1, 2, 3].slice(0, W), wk, pr, boost, fitted);
+        const r = auction(env, base.pending_pool, alive, R, budget, forced(wk), [0, 1, 2, 3].slice(0, W), wk, pr, boost, fitted);
         tot.spent += r[0];
         tot.studs += r[1];
         tot.league_spend[0] += r[2];
@@ -167,13 +184,13 @@ export function pathsChunk(env, job) {
             let tt;
             if (wi === 0 && week0) tt = week0[c * T + tix.get(t)];
             else {
-              const rk = keys.get(t);
+              const rk = R.ids.get(t);
               let memo = lcache[wi].get(rk);
               if (!memo) lcache[wi].set(rk, (memo = new Float64Array(C).fill(NaN)));
               tt = memo[c];
               if (Number.isNaN(tt)) {
                 const cands = [];
-                for (const p of rosters.get(t)) {
+                for (const p of R.rosters.get(t)) {
                   const i = ctx.ix.get(p);
                   if (avail[off + i]) cands.push([pw[i], p, ctx.posOf.get(p)]);
                 }
@@ -197,10 +214,10 @@ export function pathsChunk(env, job) {
           if (!track) break;
         }
         if (alive.length === 1 || wi === W - 1) break;
-        const pool = rosters.get(lowT).filter((p) => ctx.rosVal[wi + 1][ctx.ix.get(p)] > 0);
+        const pool = R.rosters.get(lowT).filter((p) => ctx.rosVal[wi + 1][ctx.ix.get(p)] > 0);
         const fut = [];
         for (let w2 = wi + 1; w2 < Math.min(wi + 1 + HORIZON, W); w2++) fut.push(w2);
-        const r = auction(ctx, mcache, pool, alive, rosters, keys, budget, myBid, fut, wk, pr, boost, fitted);
+        const r = auction(env, pool, alive, R, budget, myBid, fut, wk, pr, boost, fitted);
         tot.spent += r[0];
         tot.studs += r[1];
         tot.league_spend[wi + 1] += r[2];

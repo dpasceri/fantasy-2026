@@ -77,7 +77,6 @@ async function run() {
   running = true;
   $("run").disabled = true;
   $("sheet-box").hidden = true;
-  const quick = !$("full").checked;
   const t0 = performance.now();
   let pool = null;
   try {
@@ -89,7 +88,6 @@ async function run() {
     pool = makePool();
     let stageName = "", stageAt = 0, stageN = 8;
     const r = await runAll(lg, pool, {
-      quick,
       onStage: (name, i, n) => { stageName = name; stageAt = i; stageN = n; progress(`${name}…`, 0.15 + (0.85 * i) / n); },
       onProgress: (d, n) => progress(`${stageName} (${Math.round((100 * d) / n)}%)…`, 0.15 + (0.85 * (stageAt + d / n)) / stageN),
     });
@@ -97,7 +95,7 @@ async function run() {
     const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n${render(r, { css: cssText })}</html>`;
     showSheet(html, r);
     const secs = Math.round((performance.now() - t0) / 1000);
-    progress(`Done in ${secs} s on ${pool.size} ${pool.size === 1 ? "core" : "cores"}${quick ? " (quick mode)" : ""}.`, 1);
+    progress(`Done in ${secs} s on ${pool.size} ${pool.size === 1 ? "core" : "cores"}.`, 1);
   } catch (e) {
     console.error(e);
     $("progress").hidden = true;

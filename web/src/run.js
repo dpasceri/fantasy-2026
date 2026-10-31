@@ -132,10 +132,11 @@ async function runDynamic(pool, settings, nPaths, seed, onDone) {
 }
 
 /**
- * Run everything. opts: {quick (1/8 of the sims, default true), onStage(name, i, n), onProgress(done, total)}.
+ * Run everything at full precision. opts: {onStage(name, i, n), onProgress(done, total)}; tests pass k to divide
+ * every sim count by k (k = 8 is run.py's --quick).
  * Returns the results object.
  */
-export async function runAll(lg, pool, { quick = true, k = quick ? 8 : 1, onStage = () => {}, onProgress = () => {} } = {}) {
+export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress = () => {} } = {}) {
   const t0 = Date.now(), timings = {};
   let tStage = Date.now(), stageNo = 0;
   const STAGES = 8;
