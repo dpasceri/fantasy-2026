@@ -34,6 +34,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # GitHub Pages lets browsers reuse files for 10 minutes, which can mix old and new files after a deploy.
+      # Stamping every link with the commit makes each deploy a fresh set of URLs.
+      - name: Stamp file links with the commit
+        run: |
+          v=${GITHUB_SHA::8}
+          sed -i -E "s#(href|src)=\"(app\.css|src/app\.js)\"#\1=\"\2?v=$v\"#g" web/index.html
+          sed -i -E "s#(from \"\.\.?/[A-Za-z0-9_./-]+\.js)\"#\1?v=$v\"#g; s#(new URL\(\"\.\.?/[A-Za-z0-9_./-]+\.(js|css))\"#\1?v=$v\"#g" web/src/*.js
+          ! grep -nE 'from "\.\.?/[^"?]+"|new URL\("\.\.?/[^"?]+"' web/src/*.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
