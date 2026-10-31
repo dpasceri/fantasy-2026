@@ -1,0 +1,18 @@
+/* App controls on top of sheet.css (the cheat sheet's look). */
+.wrap { max-width: 900px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.row label { font: 600 13px/1.2 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); flex-basis: 100%; }
+input, select, button { font: 15px/1.2 var(--f-body); color: var(--ink); background: var(--sheet); border: 1px solid var(--rule);
+  border-radius: 3px; padding: 9px 11px; min-height: 40px; box-sizing: border-box; }
+input { flex: 1 1 260px; min-width: 0; font-family: var(--f-data); }
+select { flex: 1 1 220px; min-width: 0; }
+button { background: var(--tab); color: var(--tab-ink); border-color: var(--tab); font: 700 15px/1 var(--f-display);
+  letter-spacing: .08em; text-transform: uppercase; cursor: pointer; padding: 10px 16px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px solid var(--you); outline-offset: 2px; }
+#status:empty { display: none; }
+#status { margin-top: 10px; padding: 10px 12px; border-left: 4px solid var(--you); background: var(--you-wash); }
+#status.bad { border-color: var(--crit); background: color-mix(in srgb, var(--crit) 10%, transparent); }
+#status ul { margin: 6px 0 0; padding-left: 20px; }
+a { color: var(--you); }
+@media (max-width: 520px) { button { flex: 1 1 100%; } }

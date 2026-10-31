@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guillotine Chop Sheet</title>
+<meta name="description" content="Monte Carlo chop odds, lineups and FAAB bids for Sleeper guillotine leagues. Runs in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="sheet.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div><div class="sub">Sleeper · guillotine leagues</div>
+  <h1>Chop sheet</h1></div>
+  <div class="meta">runs on your computer<br>nothing is uploaded</div>
+</header>
+
+<div class="board">
+<section class="box"><h2>Your league</h2><div class="inner">
+  <form id="league-form" class="row">
+    <label for="league-id">Sleeper league ID or URL</label>
+    <input id="league-id" name="league" inputmode="numeric" autocomplete="off" placeholder="e.g. 1234567890123456789" required>
+    <button type="submit">Load league</button>
+  </form>
+  <p class="note">Find it in the league's URL on sleeper.com: sleeper.com/leagues/<b>this number</b>/…</p>
+  <div id="status" role="status" aria-live="polite"></div>
+</div></section>
+
+<section class="box" id="team-box" hidden><h2>Your team</h2><div class="inner">
+  <div class="row">
+    <label for="team">Which team is yours?</label>
+    <select id="team"></select>
+    <button id="run" type="button" disabled>Run sims</button>
+  </div>
+  <p class="note" id="league-facts"></p>
+  <p class="note">The simulator is being ported to the browser. Loading and checking your league works now; the sims come next.</p>
+</div></section>
+
+<section class="box"><h2>Supported leagues</h2><div class="inner">
+  <p>Guillotine leagues on Sleeper with FAAB waivers and QB / RB / WR / TE / FLEX slots.
+  Not supported: kicker and defense slots, superflex and 2-QB, IDP, best ball.</p>
+  <p class="note">Open source: <a href="https://github.com/dpasceri/fantasy-2026">github.com/dpasceri/fantasy-2026</a></p>
+</div></section>
+</div>
+</div>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
