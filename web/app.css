@@ -1,10 +1,9 @@
-/* The front page: dark, one narrow column, set in the same type as the sheet (serif title, sans text, mono figures).
+/* The front page: dark, one narrow column, set in the same type as the sheet (sans text, mono figures).
    The cheat sheet itself (in the iframe) uses sheet.css. */
 :root {
   color-scheme: dark;
   --bg: #0f0f10; --panel: #161618; --ink: #ece9e2; --ink-2: #bcb8b0; --muted: #8b877f; --faint: #5f5c57;
   --rule: #2e2e31; --field: #3a3a3e; --bad: #ff6b61;
-  --serif: ui-serif, "New York", "Iowan Old Style", Charter, "Palatino Linotype", Palatino, P052, Georgia, "Noto Serif", serif;
   --sans: system-ui, -apple-system, "Segoe UI", "Ubuntu Sans", Ubuntu, Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Ubuntu Sans Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
 }
@@ -18,7 +17,7 @@ a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 
 a:hover { text-decoration-color: var(--ink-2); }
 
 header { margin: 0 0 40px; }
-h1 { font: 600 clamp(36px, 7vw, 48px)/1 var(--serif); letter-spacing: -.015em; margin: 0 0 14px; }
+h1 { font: 600 clamp(36px, 7vw, 48px)/1 var(--sans); letter-spacing: -.015em; margin: 0 0 14px; }
 .lede { margin: 0; color: var(--ink-2); }
 
 .lbl { display: block; margin: 0 0 6px; font: 600 10.5px/1.4 var(--sans); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
