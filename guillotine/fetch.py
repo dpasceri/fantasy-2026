@@ -35,6 +35,12 @@ def get(url, tries=4):
             time.sleep(1.5 * (i + 1))
 
 
+def fresh(url):
+    """url with a throwaway parameter, for data that moves during games: Sleeper's CDN answers with its last copy while
+    it refreshes it (stale-while-revalidate=600; mid-game it was seen 165 s behind), but a URL it hasn't seen goes through."""
+    return f"{url}{'&' if '?' in url else '?'}_={int(time.time() * 1000)}"
+
+
 def save(name, obj):
     path = os.path.join(DATA, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -74,7 +80,7 @@ def live_games(season, leg, sched):
             games[g["game_id"]] = {"away": g["away"], "home": g["home"], "state": st,
                                    "frac_left": {"pre": 1.0, "in": 0.5, "post": 0.0}[st], "clock": None, "kickoff": g.get("date")}
     try:
-        events = get(f"{ESPN}?seasontype=2&week={leg}&dates={season}")["events"]
+        events = get(fresh(f"{ESPN}?seasontype=2&week={leg}&dates={season}"))["events"]
     except Exception as e:
         print(f"ESPN scoreboard unavailable ({e}); using Sleeper's game status only")
         events = []
@@ -122,10 +128,10 @@ def main():
         "league.json": f"{API}/league/{L}",
         "users.json": f"{API}/league/{L}/users",
         "rosters.json": f"{API}/league/{L}/rosters",
-        "schedule.json": f"{API2}/schedule/nfl/regular/{season}",
+        "schedule.json": fresh(f"{API2}/schedule/nfl/regular/{season}"),
     }
     for w in range(1, leg + 1):
-        jobs[f"matchups_{w}.json"] = f"{API}/league/{L}/matchups/{w}"
+        jobs[f"matchups_{w}.json"] = f"{API}/league/{L}/matchups/{w}" if w < leg else fresh(f"{API}/league/{L}/matchups/{w}")
         jobs[f"tx_{w}.json"] = f"{API}/league/{L}/transactions/{w}"
     weekly = {}
     for w in range(1, max(final_week, 17) + 1):
@@ -151,7 +157,7 @@ def main():
 
     # the week in progress: game states and live box scores (Sleeper updates them during games)
     games = live_games(season, leg, json.load(open(os.path.join(DATA, "schedule.json"))))
-    stats = slim_weekly(get(f"{API2}/stats/nfl/{season}/{leg}?season_type=regular&{POS_Q}"), keys)
+    stats = slim_weekly(get(fresh(f"{API2}/stats/nfl/{season}/{leg}?season_type=regular&{POS_Q}")), keys)
     save("live.json", {"week": leg, "fetched_at": int(time.time()), "games": games, "stats": stats})
     n = {s: sum(g["state"] == s for g in games.values()) for s in ("pre", "in", "post")}
     print(f"week {leg} live: {n['post']} final, {n['in']} in progress, {n['pre']} not started; {len(stats)} box scores")

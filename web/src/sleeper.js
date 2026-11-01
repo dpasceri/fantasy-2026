@@ -1,14 +1,15 @@
 // Sleeper's public API. Both hosts answer with `access-control-allow-origin: *`, so the browser calls them directly.
 export const API = "https://api.sleeper.app/v1";
 export const API2 = "https://api.sleeper.com"; // projections, stats, schedule (undocumented; used by the Sleeper app)
-// For data that moves during games. Sleeper sends no max-age but stale-while-revalidate=600, so a plain fetch gets the
-// browser's last copy (up to 10 minutes old) and refreshes it in the background: each re-run saw the previous run's scores.
-export const FRESH = { cache: "no-cache" };
+// For data that moves during games. Sleeper's CDN and the browser both answer with their last copy while they refresh it
+// in the background (stale-while-revalidate=600; mid-game the CDN's was seen 165 s behind), so these URLs get a
+// throwaway parameter: a URL neither cache has seen goes to Sleeper's servers.
+export const fresh = (url) => `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`;
 
-export async function getJSON(url, tries = 3, init = undefined) {
+export async function getJSON(url, tries = 3) {
   for (let i = 0; ; i++) {
     try {
-      const r = await fetch(url, init);
+      const r = await fetch(url);
       if (!r.ok) throw new Error(`${r.status} ${r.statusText} from ${url}`);
       return await r.json();
     } catch (e) {
