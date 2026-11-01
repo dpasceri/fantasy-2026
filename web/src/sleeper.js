@@ -1,11 +1,14 @@
 // Sleeper's public API. Both hosts answer with `access-control-allow-origin: *`, so the browser calls them directly.
 export const API = "https://api.sleeper.app/v1";
 export const API2 = "https://api.sleeper.com"; // projections, stats, schedule (undocumented; used by the Sleeper app)
+// For data that moves during games. Sleeper sends no max-age but stale-while-revalidate=600, so a plain fetch gets the
+// browser's last copy (up to 10 minutes old) and refreshes it in the background: each re-run saw the previous run's scores.
+export const FRESH = { cache: "no-cache" };
 
-export async function getJSON(url, tries = 3) {
+export async function getJSON(url, tries = 3, init = undefined) {
   for (let i = 0; ; i++) {
     try {
-      const r = await fetch(url);
+      const r = await fetch(url, init);
       if (!r.ok) throw new Error(`${r.status} ${r.statusText} from ${url}`);
       return await r.json();
     } catch (e) {

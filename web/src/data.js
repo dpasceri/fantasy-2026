@@ -1,7 +1,7 @@
 // Port of guillotine/fetch.py: pull everything the simulator needs from Sleeper (and ESPN for live game
 // clocks) into the `raw` shape League expects. Last season's weekly files never change, so they're kept in
 // IndexedDB and fetched once per browser.
-import { API, API2, getJSON } from "./sleeper.js";
+import { API, API2, FRESH, getJSON } from "./sleeper.js";
 import { POS } from "./league.js";
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
@@ -76,7 +76,7 @@ async function liveGames(season, leg, sched) {
   }
   let events = [];
   try {
-    events = (await getJSON(`${ESPN}?seasontype=2&week=${leg}&dates=${season}`, 1)).events || [];
+    events = (await getJSON(`${ESPN}?seasontype=2&week=${leg}&dates=${season}`, 1, FRESH)).events || [];
   } catch { /* Sleeper's status alone is fine */ }
   const byTeams = new Map(Object.entries(games).map(([gid, g]) => [[g.away, g.home].sort().join("|"), gid]));
   for (const ev of events) {
@@ -107,10 +107,10 @@ export async function loadAll(L, onProgress = () => {}) {
   const tasks = [
     async () => { raw.users = await getJSON(`${API}/league/${L}/users`); },
     async () => { raw.rosters = await getJSON(`${API}/league/${L}/rosters`); },
-    async () => { raw.schedule = await getJSON(`${API2}/schedule/nfl/regular/${season}`); },
+    async () => { raw.schedule = await getJSON(`${API2}/schedule/nfl/regular/${season}`, 3, FRESH); },
   ];
   for (let w = 1; w <= leg; w++) {
-    tasks.push(async () => { raw.matchups[w] = (await getJSON(`${API}/league/${L}/matchups/${w}`)) || []; });
+    tasks.push(async () => { raw.matchups[w] = (await getJSON(`${API}/league/${L}/matchups/${w}`, 3, w === leg ? FRESH : undefined)) || []; });
     tasks.push(async () => { raw.tx[w] = (await getJSON(`${API}/league/${L}/transactions/${w}`)) || []; });
   }
   const weekly = (target, kind, s, w, cache) => async () => {
@@ -129,7 +129,7 @@ export async function loadAll(L, onProgress = () => {}) {
     tasks.push(weekly(raw.stats.calib, "stats", calib, w, true));
   }
   let liveStats = {};
-  tasks.push(async () => { liveStats = slimWeekly(await getJSON(`${API2}/stats/nfl/${season}/${leg}?season_type=regular&${POS_Q}`)); });
+  tasks.push(async () => { liveStats = slimWeekly(await getJSON(`${API2}/stats/nfl/${season}/${leg}?season_type=regular&${POS_Q}`, 3, FRESH)); });
   await limited(tasks, 8, onProgress);
   const fetchedAt = Math.floor(Date.now() / 1000);
   raw.live = { week: leg, fetched_at: fetchedAt, games: await liveGames(season, leg, raw.schedule), stats: liveStats };
