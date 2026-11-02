@@ -1,11 +1,12 @@
 // A made-up guillotine league in the `raw` shape, so the whole pipeline can run on CI without real data.
-// 8 teams, one chopped per week from week 1; it's week 3 with two teams gone and one auction run so far.
+// 8 teams, one chopped per week from week 1; it's week 3 with two teams gone and one auction run so far
+// (both, with `waived`).
 import { Rng } from "../src/rng.js";
 
 const POSN = { QB: 24, RB: 50, WR: 60, TE: 26 };
 const BASE = { QB: 17, RB: 10, WR: 10, TE: 7 };
 
-export function syntheticRaw({ bids = 6, budget = 100 } = {}) {
+export function syntheticRaw({ bids = 6, budget = 100, waived = false } = {}) {
   const rng = new Rng(2024);
   const players = [];
   let id = 1000;
@@ -49,6 +50,14 @@ export function syntheticRaw({ bids = 6, budget = 100 } = {}) {
     rosters[winner - 1].players.push(p);
     rosters[winner - 1].settings.waiver_budget_used += 5 + 3 * i;
   });
+  // waived: the week-2 chop's roster has been through a waiver run too, so no auction is pending (mid-week)
+  if (waived) {
+    const p = rosters[1].players[0];
+    tx[3].push({ type: "waiver", status: "complete", status_updated: 2500, roster_ids: [4], adds: { [p]: 4 }, drops: null,
+      settings: { waiver_bid: 7 } });
+    rosters[3].players.push(p);
+    rosters[3].settings.waiver_budget_used += 7;
+  }
   rosters[0].players = [];
   rosters[1].players = [];
   const matchups = {};

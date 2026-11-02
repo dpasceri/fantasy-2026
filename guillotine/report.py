@@ -462,6 +462,8 @@ def render(r, path=None):
                          f'{" · if rivals bid harder: $" + str(sb["best_bid"]) if sb else ""}</p>{leg}{ch}</div>')
         head = (f"Auction: {esc(sc['owner'])} was chopped" if sc["known"] else f"Auction: if {esc(sc['owner'])} is chopped")
         sub = (f"on waivers now · {sims['grid_paths']:,} season paths per bid" if sc["known"]
+               else f"{pct(sc['p_chop'])} likely in week {wk - 1}, assumed chopped · {sims['grid_paths']:,} season paths per bid"
+               if sc.get("assumed")
                else f"{pct(sc['p_chop'])} likely this week · {sims['grid_paths']:,} paths per bid")
         return (f'<section class="box"><h2>{head} <small>{sub}</small></h2><div class="inner">{auction_note if first else ""}'
                 f'<div class="tbl"><table><thead><tr><th>Player</th><th class="r">Gain to you /wk</th>'
@@ -533,7 +535,9 @@ def render(r, path=None):
         r2_txt = f" R² = {sz['r2']}."
     gen = dt.datetime.fromtimestamp(r["generated_at"]).strftime("%a %b %-d, %-I:%M %p")
     fet = dt.datetime.fromtimestamp(r["fetched_at"]).strftime("%a %b %-d, %-I:%M %p")
-    pend = (f' · auction pending for {esc(r["pending"]["owner"])}' if r.get("pending") else "")
+    pend = ("" if not r.get("pending")
+            else f' · peek: assumes {esc(r["pending"]["owner"])} is chopped in week {wk - 1}' if r["pending"].get("assumed")
+            else f' · auction pending for {esc(r["pending"]["owner"])}')
     weeks = r["weeks"]
 
 

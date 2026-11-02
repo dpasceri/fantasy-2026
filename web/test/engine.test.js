@@ -8,7 +8,7 @@ import { bestLineup, League } from "../src/league.js";
 import { fit } from "../src/model.js";
 import { InlinePool } from "../src/pool.js";
 import { render } from "../src/report.js";
-import { runAll } from "../src/run.js";
+import { PEEK_AT, peekCandidate, runAll } from "../src/run.js";
 import { Rng } from "../src/rng.js";
 import { erfc, ndtr, ndtri, pyRound, quantile } from "../src/stats.js";
 import { GDIR, HAVE_DATA, loadLocal, PY } from "./local-data.js";
@@ -52,6 +52,66 @@ test("a synthetic league runs end to end and the sheet renders", async () => {
   const html = render(r);
   assert.match(html, /manager5 chop sheet/i);
   assert.doesNotMatch(html, /undefined|NaN%|\[object Object\]/);
+});
+
+test("a peek at next week: the week under way counts as over with the assumed team chopped", () => {
+  const raw = syntheticRaw({ waived: true });
+  const now = new League(raw, 5);
+  assert.equal(now.pending, null);
+  assert.equal(now.week, 3);
+  const lg = new League(raw, 5, { assumeChopped: { rid: 3, p_chop: 0.97 } });
+  assert.equal(lg.week, 4);
+  assert.equal(lg.live, null);
+  assert.deepEqual(lg.alive(), [4, 5, 6, 7, 8]);
+  assert.ok(lg.pending.assumed && lg.pending.rid === 3 && lg.pending.p_chop === 0.97);
+  assert.deepEqual(lg.pending.pool, lg.players(3));
+  // the data isn't touched: the same raw still gives the week as it stands
+  assert.deepEqual(new League(raw, 5).alive(), [3, 4, 5, 6, 7, 8]);
+  const peek = (r, opt) => () => new League(r, 5, { assumeChopped: { rid: 3, p_chop: 0.97, ...opt } });
+  assert.throws(peek(raw, { rid: 5 }), /your own chop/);
+  assert.throws(peek(raw, { rid: 2 }), /isn't alive/);
+  assert.throws(peek(syntheticRaw()), /already on waivers/); // the week-2 chop's auction hasn't run
+  const last = syntheticRaw({ waived: true });
+  last.meta.final_week = 3;
+  assert.throws(peek(last), /no week under way/);
+});
+
+test("peekCandidate offers the peek only for a rival at 95% or more, mid-week, with a week to come", () => {
+  const lg = new League(syntheticRaw({ waived: true }), 5);
+  const r = (p, meTop = false) => ({ standings: [{ rid: 3, owner: "manager3", p_chop_now: meTop ? 1 - p : p, me: false },
+    { rid: 5, owner: "manager5", p_chop_now: meTop ? p : 1 - p, me: true }] });
+  assert.deepEqual(peekCandidate(lg, r(0.95)), { rid: 3, owner: "manager3", p_chop: 0.95, week: 4 });
+  assert.equal(PEEK_AT, 0.95);
+  assert.equal(peekCandidate(lg, r(0.949)), null);
+  assert.equal(peekCandidate(lg, r(0.99, true)), null, "not when it's me");
+  assert.equal(peekCandidate(new League(syntheticRaw(), 5), r(0.99)), null, "not with an auction pending");
+  const done = syntheticRaw({ waived: true });
+  for (const g of done.schedule) if (g.week === 3) g.status = "complete";
+  assert.equal(peekCandidate(new League(done, 5), r(0.99)), null, "not once the sheet is on next week");
+  const last = syntheticRaw({ waived: true });
+  last.meta.final_week = 3;
+  assert.equal(peekCandidate(new League(last, 5), r(0.99)), null, "not in the final week");
+});
+
+test("a peek runs end to end: next week's sheet, with the assumed team's roster as the only auction", async () => {
+  const lg = new League(syntheticRaw({ waived: true }), 5, { assumeChopped: { rid: 3, p_chop: 0.97 } });
+  const r = await runAll(lg, new InlinePool(), { k: 160 });
+  const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+  assert.equal(r.week, 4);
+  assert.deepEqual(r.weeks, [4, 5, 6, 7]);
+  assert.equal(r.live, null);
+  assert.deepEqual(r.pending, { owner: "manager3", n: r.pending.n, assumed: true, p_chop: 0.97 });
+  assert.ok(!r.standings.some((s) => s.rid === 3));
+  assert.ok(Math.abs(sum(r.standings.map((s) => s.p_chop_now)) - 1) < 1e-9);
+  assert.equal(r.scenarios.length, 1);
+  const sc = r.scenarios[0];
+  assert.ok(sc.rid === 3 && sc.known === false && sc.assumed === true && sc.p_chop === 0.97);
+  assert.ok(sc.players.length > 0 && sc.players.every((p) => lg.players(3).includes(p.pid)));
+  assert.ok(!r.free_agents.some((f) => lg.players(3).includes(f.pid)), "his players are in the auction, not free agents");
+  const html = render(r);
+  assert.match(html, /week 4 of 7 · peek: assumes manager3 is chopped in week 3/);
+  assert.match(html, /Auction: if manager3 is chopped <small>97\.0% likely in week 3, assumed chopped/);
+  assert.doesNotMatch(html, /was chopped|on waivers now|undefined|NaN%|\[object Object\]/);
 });
 
 test("the bid prior covers leagues with under 20 bids and scales with the budget", () => {

@@ -15,8 +15,11 @@ const ELIG = new Map(Object.entries(FLEX_OK).map(([s, ps]) => [s, new Set(ps)]))
 export const eligible = (slot, pos) => pos === slot || (ELIG.has(slot) && ELIG.get(slot).has(pos));
 
 export class League {
-  /** me: my roster id (number) or Sleeper display name. */
-  constructor(raw, me) {
+  /**
+   * me: my roster id (number) or Sleeper display name. assumeChopped: {rid, p_chop} treats the week under way as
+   * decided with that team chopped, a peek at next week (run.js's peekCandidate says when).
+   */
+  constructor(raw, me, { assumeChopped = null } = {}) {
     this.raw = raw;
     this.meta = raw.meta;
     this.league = raw.league;
@@ -46,9 +49,22 @@ export class League {
     const done = sched.length > 0 && sched.every((g) => g.status === "complete");
     this.week = done && this.leg < this.final_week ? this.leg + 1 : this.leg;
     this.pending = this._pendingAuction();
+    this.assumed = null;
+    if (assumeChopped) this._assumeChopped(assumeChopped);
     const live = raw.live;
     const on = live && live.week === this.week && Object.values(live.games).some((g) => g.state !== "pre");
     this.live = on ? live : null;
+  }
+
+  /** Next week as it will stand on Tuesday: that team's roster is the pending auction, this week's games don't count. */
+  _assumeChopped({ rid, p_chop }) {
+    if (rid === this.me) throw new Error("Can't peek past your own chop.");
+    if (this.pending) throw new Error("A chopped roster is already on waivers, so the sheet is on next week already.");
+    if (this.week !== this.leg || this.leg >= this.final_week) throw new Error("There's no week under way to skip.");
+    if (!this.alive().includes(rid)) throw new Error(`Roster ${rid} isn't alive.`);
+    this.assumed = rid;
+    this.week = this.leg + 1; // live data is for this.leg, so nothing is locked
+    this.pending = { rid, pool: this.players(rid).filter((p) => POS.includes(this.pos(p))), time: null, assumed: true, p_chop };
   }
 
   /** [state, share of the game left, points so far] for this player's game this week; state is pre / in / post. */
@@ -119,6 +135,7 @@ export class League {
   /** Teams still in: rosters with players that haven't been chopped (some leagues leave a chopped roster's players). */
   alive() {
     const chopped = new Set(Object.values(this.tx).flat().filter((t) => t.type === "chopped").map((t) => t.roster_ids[0]));
+    if (this.assumed !== null) chopped.add(this.assumed);
     return [...this.rosters.entries()].filter(([r, x]) => (x.players || []).length && !chopped.has(r)).map(([r]) => r).sort((a, b) => a - b);
   }
 

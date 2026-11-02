@@ -4,6 +4,8 @@ Fantasy football tools for [Sleeper](https://sleeper.com) leagues.
 
 **[dpasceri.github.io/fantasy-2026](https://dpasceri.github.io/fantasy-2026/)**: paste a Sleeper league ID, pick your team, hit run. Monte Carlo sims of the rest of a guillotine league's season, run in your browser on all your cores: who gets chopped, what lineup to start, which free agents matter and what to bid in each FAAB auction. A full-precision run takes about 20 s on a 16-core desktop and under a minute on a recent phone.
 
+When a week is all but decided early (a rival 95% or more likely to be chopped with games still to play), the sheet offers a peek at next week: it treats that team as chopped, so you get next week's chop odds and lineup, and bid advice for that one roster's auction.
+
 Supported: guillotine leagues with FAAB waivers and QB / RB / WR / TE / FLEX slots. Not supported: kicker and defense slots, superflex and 2-QB, IDP, best ball.
 
 What's here:

@@ -375,6 +375,7 @@ export function render(r, { css } = {}) {
     }
     const head = truthy(sc.known) ? `Auction: ${esc(sc.owner)} was chopped` : `Auction: if ${esc(sc.owner)} is chopped`;
     const sub = truthy(sc.known) ? `on waivers now · ${fmtComma(sims.grid_paths)} season paths per bid`
+      : truthy(sc.assumed) ? `${pct(sc.p_chop)} likely in week ${wk - 1}, assumed chopped · ${fmtComma(sims.grid_paths)} season paths per bid`
       : `${pct(sc.p_chop)} likely this week · ${fmtComma(sims.grid_paths)} paths per bid`;
     return `<section class="box"><h2>${head} <small>${sub}</small></h2><div class="inner">${first ? auctionNote : ""}`
       + '<div class="tbl"><table><thead><tr><th>Player</th><th class="r">Gain to you /wk</th>'
@@ -450,7 +451,9 @@ export function render(r, { css } = {}) {
   }
   const gen = strftime(r.generated_at, "%a %b %-d, %-I:%M %p");
   const fet = strftime(r.fetched_at, "%a %b %-d, %-I:%M %p");
-  const pend = truthy(r.pending) ? ` · auction pending for ${esc(r.pending.owner)}` : "";
+  const pend = !truthy(r.pending) ? ""
+    : truthy(r.pending.assumed) ? ` · peek: assumes ${esc(r.pending.owner)} is chopped in week ${wk - 1}`
+    : ` · auction pending for ${esc(r.pending.owner)}`;
   const weeks = r.weeks;
   const wRange = `${weeks[0]}–${weeks[weeks.length - 1]}`;
 

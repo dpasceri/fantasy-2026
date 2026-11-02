@@ -61,6 +61,10 @@ progress::-moz-progress-bar { background: var(--ink); }
 .sheet-bar { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; height: 36px; padding: 0 16px;
   border-bottom: 1px solid var(--rule); font-size: 13px; }
 #sheet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--muted); }
+#peek-box { margin-left: auto; display: flex; align-items: center; gap: 10px; } /* shrinks by its note, never its button */
+#peek-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+#peek { min-height: 0; padding: 2px 10px; font-size: 12.5px; white-space: nowrap; }
+@media (max-width: 600px) { #peek-note { display: none; } }
 #download { flex: 0 0 auto; }
 #download::after { content: " ↓"; }
 #sheet { display: block; flex: 1 1 auto; width: 100%; min-height: 0; border: 0; }

@@ -4,7 +4,7 @@ import { League } from "./league.js";
 import { InlinePool, WorkerPool } from "./pool.js";
 import { esc, fmtComma, fmtG } from "./pyfmt.js";
 import { pct, render } from "./report.js";
-import { runAll } from "./run.js";
+import { peekCandidate, runAll } from "./run.js";
 import { loadLeague, teams } from "./sleeper.js";
 
 const $ = (id) => document.getElementById(id);
@@ -13,6 +13,9 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 let leagueId = null, running = false;
+// The last run of the week as it stands: {raw, rid, sheet, cand, peekSheet}. A peek at next week reuses its data (the
+// odds that offered the peek came from it), and both sheets are kept so switching between them is instant.
+let weekRun = null, peeking = false;
 
 function say(text, bad = false, list = []) {
   const el = $("status");
@@ -310,9 +313,11 @@ function sheetDoc(r, css) {
 /* sheet-doc:end */
 
 let cssText = null;
-async function run() {
+/** peek: run next week as if weekRun's all-but-chopped rival is chopped (the 'Peek at week N' button). */
+async function run(peek = false) {
   if (running || !leagueId) return;
-  const rid = Number($("team").value);
+  const cand = peek ? weekRun.cand : null;
+  const rid = peek ? weekRun.rid : Number($("team").value);
   if (!rid) return;
   running = true;
   $("run").disabled = true;
@@ -320,11 +325,17 @@ async function run() {
   const t0 = performance.now();
   let pool = null;
   try {
-    progress("Downloading league data and projections…", 0);
     pool = makePool(); // the workers load while the data downloads
     const cssP = cssText === null ? fetch(new URL("../sheet.css", import.meta.url)).then((r) => r.text()) : null;
-    const raw = await loadAll(leagueId, (d, n) => progress(`Downloading league data and projections (${d} of ${n})…`, (0.15 * d) / n));
-    const lg = new League(raw, rid);
+    let raw;
+    if (cand) {
+      raw = weekRun.raw;
+      progress(`Peeking at week ${cand.week} with ${cand.owner} chopped…`, 0.15);
+    } else {
+      progress("Downloading league data and projections…", 0);
+      raw = await loadAll(leagueId, (d, n) => progress(`Downloading league data and projections (${d} of ${n})…`, (0.15 * d) / n));
+    }
+    const lg = new League(raw, rid, cand ? { assumeChopped: cand } : {});
     if (!lg.alive().includes(rid)) throw new Error("That team has already been chopped, so there's nothing left to simulate.");
     if (lg.week > lg.final_week) throw new Error("This league's season is over.");
     let stageName = "", frac = 0; // stages overlap, so progress counts work done over the whole run
@@ -333,13 +344,17 @@ async function run() {
       onProgress: (d, n) => { frac = Math.min(d / n, 1); progress(`${stageName} (${Math.round(100 * frac)}%)…`, 0.15 + 0.85 * frac); },
     });
     if (cssP) cssText = await cssP;
-    showSheet(sheetDoc(r, cssText), r);
+    const sheet = { html: sheetDoc(r, cssText), r };
+    if (cand) weekRun.peekSheet = sheet;
+    else weekRun = { raw, rid, sheet, cand: peekCandidate(lg, r), peekSheet: null };
+    showSheet(sheet, !!cand);
     const secs = Math.round((performance.now() - t0) / 1000);
     progress(`Done in ${secs} s on ${pool.size} ${pool.size === 1 ? "core" : "cores"}.`, 1);
   } catch (e) {
     console.error(e);
     $("progress").hidden = true;
     say(`The sims failed: ${e.message}`, true);
+    if (cand) showSheet(weekRun.sheet, false); // back to the week as it stands
   } finally {
     if (pool) pool.close();
     running = false;
@@ -348,7 +363,7 @@ async function run() {
 }
 
 // The sheet gets the whole viewport and scrolls on its own, so its section rail and bar can stay pinned.
-function showSheet(html, r) {
+function showSheet({ html, r }, peek) {
   const frame = $("sheet");
   frame.onload = () => {
     $("sheet-box").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -358,9 +373,25 @@ function showSheet(html, r) {
   const a = $("download");
   if (a.href.startsWith("blob:")) URL.revokeObjectURL(a.href);
   a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  a.download = `chop-sheet-${r.season}-week-${r.week}.html`;
+  a.download = `chop-sheet-${r.season}-week-${r.week}${peek ? "-peek" : ""}.html`;
   $("sheet-name").textContent = a.download;
+  peeking = peek;
+  const c = weekRun.cand;
+  $("peek-box").hidden = !c;
+  if (c) {
+    $("peek-note").textContent = peek ? `Week ${c.week} peek: ${c.owner} assumed chopped` : `${c.owner} is ${pct(c.p_chop)} likely chopped`;
+    $("peek").textContent = peek ? `Back to week ${c.week - 1}` : `Peek at week ${c.week}`;
+    $("peek").title = peek ? `The sheet for week ${c.week - 1} as it stands`
+      : `Treat week ${c.week - 1} as over with ${c.owner} chopped: week ${c.week}'s chop odds and lineup, and bids for ${c.owner}'s roster only`;
+  }
   $("sheet-box").hidden = false;
+}
+
+function togglePeek() {
+  if (running || !weekRun || !weekRun.cand) return;
+  if (peeking) showSheet(weekRun.sheet, false);
+  else if (weekRun.peekSheet) showSheet(weekRun.peekSheet, true);
+  else run(true);
 }
 
 $("league-form").addEventListener("submit", (e) => {
@@ -371,7 +402,8 @@ $("team").addEventListener("change", () => {
   if (leagueId) store.set(`team:${leagueId}`, $("team").value);
   $("run").disabled = running || !$("team").value;
 });
-$("run").addEventListener("click", run);
+$("run").addEventListener("click", () => run());
+$("peek").addEventListener("click", togglePeek);
 
 const last = store.get("league");
 if (last) {

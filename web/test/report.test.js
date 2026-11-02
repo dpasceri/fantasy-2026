@@ -27,6 +27,11 @@ def variant(name):
         r["bid_model"]["size"]["r2"] = float("nan")
     elif name == "pending":  # flip whichever way the file has it
         r["pending"] = None if r.get("pending") else {"owner": r["scenarios"][0]["owner"]}
+    elif name == "peek":  # a peek at next week: the likeliest chop is assumed, so its auction is the only one
+        sc = r["scenarios"][0]
+        sc["known"], sc["assumed"], sc["p_chop"] = False, True, 0.973
+        r["scenarios"] = [sc]
+        r["pending"] = {"owner": sc["owner"], "n": len(sc["players"]), "assumed": True, "p_chop": 0.973}
     elif name == "no_live":
         r["live"] = None
     elif name == "live_in_progress" and r.get("live"):
@@ -58,7 +63,7 @@ def variant(name):
         with open(report.render(r, os.path.join(d, "sheet.html"))) as f:
             return {"r": r, "html": f.read()}
 
-names = ["base", "prior", "pending", "no_live", "live_in_progress", "no_used", "me_first", "me_last", "no_history",
+names = ["base", "prior", "pending", "peek", "no_live", "live_in_progress", "no_used", "me_first", "me_last", "no_history",
          "no_faab", "priced_out", "budget_1000", "switched_policy"]
 print(json.dumps({"css": report.CSS, "variants": {n: variant(n) for n in names}}))
 `;
@@ -101,6 +106,9 @@ test("prior and pending variants actually exercise their branches", (t) => {
   assert.match(v.prior.html, /too few to fit/);
   assert.doesNotMatch(v.prior.html, /R² =/);
   assert.notEqual(v.pending.html.includes("auction pending for"), v.base.html.includes("auction pending for"));
+  assert.match(v.peek.html, /peek: assumes .+ is chopped in week \d+/);
+  assert.match(v.peek.html, /Auction: if .+ is chopped <small>97\.3% likely in week \d+, assumed chopped/);
+  assert.match(v.peek.html, /If .+ is chopped \(97%\)/);
 });
 
 test("without css the <style> element is left out (the page uses sheet.css)", (t) => {

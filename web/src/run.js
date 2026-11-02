@@ -16,6 +16,17 @@ export const POLICY = { m_early: 0.75, m_late: 0.75, switch_week: 12 };
 // guards against picking the luckiest of 16 cells). Tuned leagues tie within noise and keep 0.75x.
 export const SWITCH_Z = 3.0;
 const PATH_CHUNK = 200;
+export const PEEK_AT = 0.95; // a rival this likely to be chopped this week makes next week worth a look
+
+/**
+ * The rival this week has all but chopped, from a finished run: {rid, owner, p_chop, week} (week = the one to peek at),
+ * or null. Only while a week is under way, with no chopped roster on waivers and a week after it.
+ */
+export function peekCandidate(lg, r) {
+  if (lg.pending || lg.week !== lg.leg || lg.week >= lg.final_week) return null;
+  const top = r.standings.reduce((a, b) => (b.p_chop_now > a.p_chop_now ? b : a));
+  return top.p_chop_now >= PEEK_AT && !top.me ? { rid: top.rid, owner: top.owner, p_chop: top.p_chop_now, week: lg.week + 1 } : null;
+}
 
 export function faCandidates(lg, exclude, perPos = { QB: 3, RB: 10, WR: 10, TE: 6 }) {
   const rostered = lg.rostered();
@@ -350,8 +361,11 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
         p_beat_rivals: c.p_beat_rivals, rival_gains: c.rival_gains };
     });
     rows.sort((a, b) => b.d_win_static - a.d_win_static);
-    return { rid: kk, owner: lg.owner(kk), known: !!pending, p_chop: pending ? 1.0 : S.chop(0, teams.indexOf(kk), 0),
-      base_win: baseWin.get(kk), players: rows };
+    // an assumed chop (a peek at next week) is still an "if", at the odds the week under way gave it
+    const sc = { rid: kk, owner: lg.owner(kk), known: !!pending && !pending.assumed,
+      p_chop: pending ? (pending.assumed ? pending.p_chop : 1.0) : S.chop(0, teams.indexOf(kk), 0), base_win: baseWin.get(kk), players: rows };
+    if (pending && pending.assumed) sc.assumed = true;
+    return sc;
   });
   tick(`auction values, static (${var2.length} variants)`);
 
@@ -413,7 +427,8 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
   return {
     generated_at: Math.floor(Date.now() / 1000), fetched_at: lg.meta.fetched_at, league: lg.league.name, league_id: lg.meta.league,
     season: lg.season, week: lg.week, final_week: lg.final_week, me: lg.owner(me), faab_me: B, open_spots: openSpots, weeks,
-    threads: pool.size, pending: pending ? { owner: lg.owner(pending.rid), n: pendPool.length } : null, live, timings,
+    threads: pool.size, pending: pending ? { owner: lg.owner(pending.rid), n: pendPool.length, ...(pending.assumed ? { assumed: true, p_chop: pending.p_chop } : {}) } : null,
+    live, timings,
     sims: { season: S.N, lineups: W8.N, auction_static: S2.N, dynamic_paths: D1.length ? D1[0].n : 0, grid_paths: D3.length ? D3[0].n : 0 },
     standings: [...standings].sort((a, b) => b.p_win - a.p_win), power, faab_pace: pace,
     chop_line: quantilesFromHist(S.lineHist, [0.1, 0.25, 0.5, 0.75, 0.9]),
