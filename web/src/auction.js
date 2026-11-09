@@ -5,8 +5,7 @@
 // v_j and u_j are manager effects shrunk toward 0 (v_j by a N(0, 1) prior, u_j by empirical Bayes).
 // A league with fewer than MIN_BIDS bids gets PRIOR instead, with budgets in units of its starting FAAB.
 import { bestLineup, eligible, POS } from "./league.js";
-import { Rng } from "./rng.js";
-import { lstsq, mean, pyRound, quantileSorted, solveSPD, variance } from "./stats.js";
+import { lstsq, mean, ndtr, pyRound, solveSPD, variance } from "./stats.js";
 
 export const HORIZON = 4;
 export const MIN_BIDS = 20;
@@ -290,57 +289,42 @@ export function faabHistory(lg) {
   return rows;
 }
 
-/** Draws of the highest rival bid. rivals: Map rid -> budget, gains: Map rid -> gain. */
-export function topRivalBids(bm, rivals, gains, leg, rng, n = 200000) {
-  const top = new Float64Array(n);
+/**
+ * The highest rival bid's distribution, exactly: cdf[b] = P(top bid <= $b) for b = 0 .. the largest rival budget
+ * (0 = nobody bids). rivals: Map rid -> budget, gains: Map rid -> gain. Each rival bids with probability p_bid, a
+ * lognormal amount rounded to whole dollars and capped at the budget, independently of the others, so the chance
+ * that none of them tops $b is a product over rivals. (auction.py draws 200,000 of these instead.)
+ */
+export function topRivalCdf(bm, rivals, gains, leg) {
+  let hi = 0;
+  for (const budget of rivals.values()) hi = Math.max(hi, budget);
+  const cdf = new Float64Array(Math.max(0, Math.trunc(hi)) + 1).fill(1);
   for (const [rid, budget] of rivals) {
     if (budget <= 0) continue;
     const g = gains.get(rid), q = bm.p_bid(rid, g, budget), m = bm.mu(rid, g, budget, leg), sigma = bm.sigma;
-    // one rival bid per draw: both random numbers are always taken (keeps the stream fixed); the amount, in whole
-    // dollars, is only worked out when the rival bids
-    for (let i = 0; i < n; i++) {
-      const bids = rng.random() < q, z = rng.normal();
-      if (bids) {
-        const b = Math.min(Math.round(Math.exp(m + sigma * z)), budget);
-        if (b > top[i]) top[i] = b;
-      }
-    }
+    // round(x) <= b when x < b + 0.5; at b >= budget the cap makes it certain
+    for (let b = 0; b < budget && b < cdf.length; b++) cdf[b] *= 1 - q + q * ndtr((Math.log(b + 0.5) - m) / sigma);
   }
-  return top;
+  return cdf;
 }
 
-/** Sorted copy of whole-dollar bids by counting (same result as sorting, without the sort). */
-export function sortDollars(top) {
-  let hi = 0;
-  for (const x of top) if (x > hi) hi = x;
-  const cnt = new Uint32Array(hi + 1);
-  for (const x of top) cnt[x]++;
-  const s = new Float64Array(top.length);
-  let k = 0;
-  for (let b = 0; b <= hi; b++) s.fill(b, k, (k += cnt[b]));
-  return s;
+/** The q-quantile of the top rival bid: the lowest whole-dollar bid that is at least that likely to be enough. */
+export function topRivalQuantile(cdf, q) {
+  let b = 0;
+  while (b < cdf.length - 1 && cdf[b] < q) b++;
+  return b;
 }
 
 /** P(my bid b beats the top rival bid) for b = 0..maxBid. Ties count half (waiver order). */
-export function pWinCurve(top, maxBid) {
-  const n = top.length;
-  let hi = maxBid + 2;
-  for (const x of top) hi = Math.max(hi, Math.trunc(x) + 1);
-  const cnt = new Float64Array(hi);
-  for (const x of top) cnt[Math.trunc(x)]++;
+export function pWinCurve(cdf, maxBid) {
+  const at = (b) => (b < 0 ? 0 : b < cdf.length ? cdf[b] : 1);
   const pw = new Float64Array(maxBid + 1);
-  let below = 0;
-  for (let b = 0; b <= maxBid; b++) {
-    pw[b] = below / n + (0.5 * cnt[b]) / n;
-    below += cnt[b];
-  }
-  pw[0] = 0; // a $0 claim never beats a real bid, and only wins uncontested players
-  return pw;
+  for (let b = 1; b <= maxBid; b++) pw[b] = at(b - 1) + 0.5 * (at(b) - at(b - 1));
+  return pw; // pw[0] = 0: a $0 claim never beats a real bid, and only wins uncontested players
 }
 
 /** Model's top-rival-bid distribution vs the price that actually cleared, per contested player. */
-export function priceBacktest(lg, bm, seed = 5) {
-  const rng = new Rng(seed);
+export function priceBacktest(lg, bm) {
   const byRun = new Map();
   for (const r of bm.rows) {
     const key = `${r.run}|${r.pid}`;
@@ -351,16 +335,10 @@ export function priceBacktest(lg, bm, seed = 5) {
   for (const rs of byRun.values()) {
     const bids = rs.filter((r) => (r.bid || 0) > 0);
     if (!bids.length || Math.max(...bids.map((r) => r.bid)) < (15 * lg.budget) / 200) continue; // contested: $15+ in a $200 league
-    const top = topRivalBids(bm, new Map(rs.map((r) => [r.rid, r.budget])), new Map(rs.map((r) => [r.rid, r.gain])), rs[0].leg, rng, 40000);
-    const actual = Math.max(...bids.map((r) => r.bid));
-    const s = sortDollars(top);
-    let lt = 0, eq = 0;
-    for (const x of top) {
-      if (x < actual) lt++;
-      else if (x === actual) eq++;
-    }
-    out.push({ leg: rs[0].leg, player: lg.label(rs[0].pid), actual, p10: quantileSorted(s, 0.1), median: quantileSorted(s, 0.5),
-      p90: quantileSorted(s, 0.9), pct_rank: (lt + 0.5 * eq) / top.length });
+    const cdf = topRivalCdf(bm, new Map(rs.map((r) => [r.rid, r.budget])), new Map(rs.map((r) => [r.rid, r.gain])), rs[0].leg);
+    const actual = Math.max(...bids.map((r) => r.bid)), at = (b) => (b < 0 ? 0 : b < cdf.length ? cdf[b] : 1);
+    out.push({ leg: rs[0].leg, player: lg.label(rs[0].pid), actual, p10: topRivalQuantile(cdf, 0.1), median: topRivalQuantile(cdf, 0.5),
+      p90: topRivalQuantile(cdf, 0.9), pct_rank: at(actual - 1) + 0.5 * (at(actual) - at(actual - 1)) });
   }
   return out.sort((a, b) => a.leg - b.leg || b.actual - a.actual);
 }

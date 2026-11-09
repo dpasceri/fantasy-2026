@@ -8,7 +8,7 @@
 import { bestLineup, eligible, P_OUT, POS } from "./league.js";
 import { Q } from "./model.js";
 import { Rng } from "./rng.js";
-import { ndtr } from "./stats.js";
+import { ndtr, ndtri0 } from "./stats.js";
 
 export const LEVEL_STEP = 0.10; // weekly random-walk sd (log scale) of a player's true level vs today's projection
 // Absences after this week (sim.py has the derivation): weekly hazard, share season-long, mean length otherwise
@@ -246,69 +246,432 @@ function scratch(U) {
   return { score: new Float32Array(U.n + 1), avail: new Uint8Array(U.n + 1), G: new Float64Array(ng), T: new Float64Array(nt) };
 }
 
+// ---- Season sims: stratified groups of paths, recombined
+//
+// Given a season's game and NFL-team factors, every player's path (scores, level drift, absences) is independent
+// of every other player's, and so every fantasy team's season is independent of every other team's. The season
+// sims lean on that twice. Paths are drawn in groups of GROUP that share one draw of the factors, and
+//   1. the group's team seasons are recombined: each team takes its season from any path of the group (ROUNDS
+//      rounds of random per-team shifts), which is GROUP * ROUNDS seasons with the exact joint law for the price
+//      of GROUP draws;
+//   2. each variant of my roster on each path is played against the rivals of every path of the group, so a
+//      pickup's value is averaged over GROUP pairings per path, not one.
+// Both are product-form estimators (Kuntz, Crucinio & Johansen 2022) applied given the factors, and unbiased for
+// any group size. On top, the draws are stratified, which leaves every single path's law exact as well: Latin
+// hypercube samples of the factors over the groups of a job, and of each player's weekly score noise, injury
+// tag and new absences over the paths of a group. Together a season path is worth about three plain ones for
+// chop and win odds and four or more for the value of a pickup (test/season.test.js checks the engine against
+// plain Monte Carlo, and its precision).
+// This week's own numbers (who is chopped now, the score to beat) don't come from here: run.js takes them from plain
+// sims of the week alone (week0Chunk), as it always has. With few games left in a week under way, what is still
+// random is mostly those games' factors, which a group shares, so grouping gains nothing there and can lose; for the
+// same reason the season then runs in smaller groups (GROUP_LIVE). run.js also measures, on every run, what the
+// paths were worth, and draws more if that falls short (seasonPrecision).
+export const GROUP = 16; // paths per group; a power of two, at most 32
+export const GROUP_LIVE = 8; // ... in a week under way
+export const ROUNDS = 32; // recombined seasons per path, for every team's odds
+export const GROUPS = 250; // groups per job
+const N_PERM = 1024; // stratum orders are drawn from this many random permutations, each with its own random shift
+
 /**
- * Season / elimination sims for one chunk. plan: {S, T, V, me_t, wi0, alive0: Uint8Array(V*T), mineOf: {wi: variant -> row},
- * opp: {wi: Int32Array(T*3*S)}, mine: {wi: Int32Array(rows*3*S)}}. Returns sums to be added across chunks.
+ * Worker-side state for seasonGroups over plans that share their teams: per week, the distinct slot triples of
+ * every lineup row (the T teams' rows, then each plan's rows for my variants) and the players they touch.
+ * A plan is {S, T, V, me_t, wi0, alive0: Uint8Array(V*T), opp: {wi: Int32Array(T*3*S)}, mine: {wi: rows},
+ * mineOf: {wi: variant -> row}}; variants with the same alive0 are one case (the same rivals).
  */
-export function seasonChunk(U, plan, ci, C, seed) {
-  const { S, T, V, me_t, wi0 } = plan, W = U.W, L = 3 * S;
-  const rng = new Rng(seed, ci);
-  const chops = new Float64Array(V * T * W), wins = new Float64Array(V * T);
-  const lineHist = new Float64Array(W * 400), myHist = new Float64Array(W * 400);
-  const { score, avail, G, T: TT } = scratch(U), st = pathState(U.n);
-  const alive = new Uint8Array(V * T), opp = new Float64Array(T), mine = new Float64Array(V), uniq = new Float64Array(V);
-  const tv = new Float64Array(Math.max(1, ...Object.values(plan.trip).map((t) => t.length / 3)));
-  const ord = new Int32Array(T); // rivals from lowest score up; ties keep team order, like the argmin below
-  for (let c = 0; c < C; c++) {
-    alive.set(plan.alive0);
-    st.loglev.fill(0);
-    st.outLeft.fill(0);
-    for (let wi = wi0; wi < W; wi++) {
-      let nAlive = 0;
-      for (let t = 0; t < T; t++) nAlive += alive[t];
-      if (nAlive <= 1) break;
-      drawWeek(U, wi, rng, st, score, avail, G, TT);
-      const oi = plan.opp[wi], of = plan.mineOf[wi], U1 = plan.mine[wi].length / L;
-      for (let t = 0; t < T; t++) opp[t] = teamScore(score, avail, oi, t * L, S);
-      rowScores(score, avail, plan.trip[wi], plan.mineTrip[wi], S, tv, uniq, U1);
-      for (let v = 0; v < V; v++) mine[v] = uniq[of[v]];
-      let nr = 0;
-      for (let t = 0; t < T; t++) {
-        if (t === me_t) continue;
-        let j = nr++;
-        for (; j > 0 && opp[ord[j - 1]] > opp[t]; j--) ord[j] = ord[j - 1];
-        ord[j] = t;
-      }
-      const wasAlive = alive[me_t] === 1; // variant 0, going into this week
-      // the chop is the lowest alive score, the earliest team on a tie: my score vs the lowest alive rival
-      for (let v = 0; v < V; v++) {
-        const av = v * T;
-        let r = 0;
-        while (r < nr && !alive[av + ord[r]]) r++;
-        const t1 = r < nr ? ord[r] : me_t, x1 = r < nr ? opp[t1] : Infinity;
-        let k = t1;
-        if (alive[av + me_t]) {
-          const m = mine[v];
-          if (m < x1 || (m === x1 && me_t < t1)) k = me_t;
-        }
-        alive[av + k] = 0;
-        chops[(av + k) * W + wi]++;
-        if (v === 0 && wasAlive) {
-          lineHist[wi * 400 + bin(x1)]++;
-          myHist[wi * 400 + bin(mine[0])]++;
-        }
+export function prepSeason(U, plans, K = GROUP) {
+  const { S, T, me_t } = plans[0], W = U.W, L = 3 * S, n = U.n, n1 = n + 1;
+  const wLo = Math.min(...plans.map((p) => p.wi0));
+  const E = { U, plans, K, S, T, W, L, me_t, wLo, trip: [], of: [], nRow: [], rowOff: [], tb: [], used: [], live: [], delta: [] };
+  let nTot = 0; // lineup totals live in one array: week w's row u on path k is tot[tb[w] + u * K + k]
+  for (let w = 0; w < W; w++) {
+    const rows = w >= wLo ? [plans[0].opp[w]] : [new Int32Array(0)], off = [];
+    let nRow = rows[0].length / L;
+    for (const p of plans) {
+      off.push(nRow);
+      if (w >= p.wi0) {
+        rows.push(p.mine[w]);
+        nRow += p.mine[w].length / L;
       }
     }
-    for (let v = 0; v < V; v++) {
-      let w = 0;
-      while (w < T - 1 && !alive[v * T + w]) w++;
-      wins[v * T + w]++;
+    const seen = new Map(), trip = [], of = new Int32Array(nRow * S), used = new Uint8Array(n1);
+    let u = 0;
+    for (const r of rows)
+      for (let o = 0; o < r.length; o += L, u++)
+        for (let k = 0; k < S; k++) {
+          const a = r[o + k], b1 = r[o + S + k], b2 = r[o + 2 * S + k], key = (a * n1 + b1) * n1 + b2;
+          let j = seen.get(key);
+          if (j === undefined) {
+            seen.set(key, (j = trip.length / 3));
+            trip.push(a, b1, b2);
+            used[a] = used[b1] = used[b2] = 1;
+          }
+          of[u * S + k] = j;
+        }
+    E.trip.push(Int32Array.from(trip));
+    E.of.push(of);
+    E.nRow.push(nRow);
+    // a variant's row differs from its plan's first row (my roster as it is) in a few slots, so its total is
+    // that row's plus the changed slots' differences: delta = [row, first row, n, (old triple, new triple) * n, ...]
+    const delta = [];
+    plans.forEach((p, pi) => {
+      if (w < p.wi0) return;
+      for (let r = 1; r < p.mine[w].length / L; r++) {
+        const u = off[pi] + r, b = off[pi], ch = [];
+        for (let k = 0; k < S; k++) if (of[u * S + k] !== of[b * S + k]) ch.push(of[b * S + k], of[u * S + k]);
+        delta.push(u, b, ch.length / 2, ...ch);
+      }
+    });
+    E.delta.push(Int32Array.from(delta));
+    E.rowOff.push(off);
+    E.tb.push(nTot);
+    nTot += nRow * K;
+    E.used.push(used);
+  }
+  E.tot = new Float64Array(nTot);
+  // rowAt[plan][v * W + w]: where variant v's totals for week w start in tot
+  E.rowAt = plans.map((p, pi) => {
+    const at = new Int32Array(p.V * W).fill(-1);
+    for (let v = 0; v < p.V; v++) for (let w = p.wi0; w < W; w++) at[v * W + w] = E.tb[w] + (E.rowOff[w][pi] + p.mineOf[w][v]) * K;
+    return at;
+  });
+  // live[w][i]: player i is in some lineup row in week w or later, so his level and absences still matter
+  for (let w = W - 1; w >= 0; w--) E.live[w] = E.used[w].map((x, i) => (x || (w + 1 < W && E.live[w + 1][i]) ? 1 : 0));
+  // cases per plan: variants that face the same rivals
+  E.cases = plans.map((p) => {
+    const ids = new Map(), caseOf = new Int32Array(p.V), list = [];
+    for (let v = 0; v < p.V; v++) {
+      const mask = p.alive0.subarray(v * T, (v + 1) * T), key = mask.join("");
+      if (!ids.has(key)) {
+        ids.set(key, list.length);
+        list.push({ mask: Uint8Array.from(mask), vars: [] });
+      }
+      caseOf[v] = ids.get(key);
+      list[caseOf[v]].vars.push(v);
+    }
+    return list;
+  });
+  // per case and week, its variants' distinct rows (rows[w]: offsets into tot) and which one each variant has (rowOf)
+  E.cases.forEach((list, pi) => {
+    for (const cs of list) {
+      cs.rows = Array.from({ length: W }, () => new Int32Array(0));
+      cs.rowOf = new Int32Array(cs.vars.length * W);
+      for (let w = plans[pi].wi0; w < W; w++) {
+        const ids = new Map();
+        cs.vars.forEach((v, a) => {
+          const at = E.rowAt[pi][v * W + w];
+          if (!ids.has(at)) ids.set(at, ids.size);
+          cs.rowOf[a * W + w] = ids.get(at);
+        });
+        cs.rows[w] = Int32Array.from(ids.keys());
+      }
+      cs.maxRows = Math.max(1, ...cs.rows.map((r) => r.length));
+    }
+  });
+  // stratum orders for the Latin hypercube draws
+  const rng = new Rng(0x5eed, K);
+  E.perm = new Uint8Array(N_PERM * K);
+  for (let r = 0; r < N_PERM; r++) {
+    for (let k = 0; k < K; k++) E.perm[r * K + k] = k;
+    for (let k = K - 1; k > 0; k--) {
+      const j = Math.floor(rng.random() * (k + 1)), t = E.perm[r * K + k];
+      E.perm[r * K + k] = E.perm[r * K + j];
+      E.perm[r * K + j] = t;
     }
   }
-  return { chops, wins, lineHist, myHist };
+  E.nF = U.n_game.map((g, w) => g + U.n_team[w]);
+  E.score = new Float32Array(n1 * K);
+  E.avail = new Uint8Array(n1 * K);
+  E.plays = new Uint8Array(n1 * K); // this week's score is counted in some lineup
+  E.anyPlays = new Uint8Array(n1);
+  E.loglev = new Float64Array(n * K);
+  E.levWeek = new Uint8Array(n * K); // the week loglev stands at
+  E.outLeft = new Int16Array(n * K);
+  E.stepSd = Float64Array.from({ length: W + 1 }, (_, d) => LEVEL_STEP * Math.sqrt(d));
+  E.tv = new Float64Array(Math.max(1, ...E.trip.map((t) => t.length / 3)) * K);
+  return E;
+}
+
+/** Factors for G groups: a Latin hypercube sample over the groups in every coordinate (game factors, then team factors). */
+function drawFactors(E, G, rng) {
+  const { U, W, nF } = E, sg = Math.sqrt(U.game_share), st = Math.sqrt(1 - U.game_share), order = new Int32Array(G);
+  const F = [];
+  for (let w = 0; w < W; w++) {
+    const f = new Float64Array(G * nF[w]);
+    if (w >= E.wLo)
+      for (let j = 0; j < nF[w]; j++) {
+        const sc = j < U.n_game[w] ? sg : st;
+        for (let g = 0; g < G; g++) order[g] = g;
+        for (let g = G - 1; g > 0; g--) {
+          const r = Math.floor(rng.random() * (g + 1)), t = order[g];
+          order[g] = order[r];
+          order[r] = t;
+        }
+        for (let g = 0; g < G; g++) f[g * nF[w] + j] = sc * ndtri0((order[g] + rng.random()) / G);
+      }
+    F.push(f);
+  }
+  return F;
+}
+
+/**
+ * Week w of one group, all K paths at once, into the lineup totals (E.tot). Who is available comes first: a new
+ * absence (or sitting out on an injury tag) goes to the paths in the lowest strata of a uniform, so absences are
+ * spread evenly over the group's paths. Then only the players a lineup actually counts are scored: each one's score
+ * noise is one draw per stratum of the normal, and his level catches up on the weeks since it was last needed (a
+ * random walk's steps add up to one normal draw).
+ */
+function drawGroupWeek(E, w, Fw, fb, rng) {
+  const { U, K, perm, score, avail, plays, anyPlays, loglev, levWeek, outLeft, stepSd, tv, tot } = E, n = U.n, invK = 1 / K;
+  const game = U.game[w], team = U.team[w], q = U.qflat[w], load = U.load, cload = U.cload, ng = U.n_game[w];
+  const live = E.live[w], haz = U.haz, pLong = U.p_long, pGeo = U.p_geo, pOut = U.p_out;
+  const locked = U.anyLocked && w === 0, started = U.started, pts0 = U.pts0, fracLeft = U.frac_left;
+  const drift = -0.5 * LEVEL_STEP * LEVEL_STEP * w;
+  for (let i = 0; i < n; i++) {
+    if (!live[i]) continue;
+    const b0 = i * K;
+    if (w > 0) { // new absences start and run down
+      const hz = haz[i] * K, sure = hz | 0, edge = hz - sure;
+      const h = rng.nextI32() >>> 0, r = (h & (N_PERM - 1)) * K, sh = (h >>> 10) & (K - 1);
+      for (let k = 0; k < K; k++) {
+        let o = outLeft[b0 + k];
+        if (o === 0) {
+          const s = (perm[r + k] + sh) & (K - 1);
+          if (s < sure || (s === sure && rng.random() < edge)) o = absence(rng, pLong[i], pGeo[i]);
+        }
+        avail[b0 + k] = o === 0 ? 1 : 0;
+        outLeft[b0 + k] = o > 0 ? o - 1 : o;
+      }
+    } else if (pOut[i] > 0 && !(locked && started[i])) { // this week: an injury tag decides who sits
+      const hz = pOut[i] * K, sure = hz | 0, edge = hz - sure;
+      const h = rng.nextI32() >>> 0, r = (h & (N_PERM - 1)) * K, sh = (h >>> 10) & (K - 1);
+      for (let k = 0; k < K; k++) {
+        const s = (perm[r + k] + sh) & (K - 1);
+        avail[b0 + k] = s < sure || (s === sure && rng.random() < edge) ? 0 : 1;
+      }
+    } else for (let k = 0; k < K; k++) avail[b0 + k] = 1;
+  }
+  // who plays: in each slot the starter, else the first available fallback
+  const trip = E.trip[w], nTrip = trip.length / 3;
+  plays.fill(0);
+  anyPlays.fill(0);
+  for (let j = 0; j < nTrip; j++) {
+    const a = trip[3 * j], b1 = trip[3 * j + 1], b2 = trip[3 * j + 2], ak = a * K, b1k = b1 * K, b2k = b2 * K;
+    for (let k = 0; k < K; k++) {
+      if (avail[ak + k]) { plays[ak + k] = 1; anyPlays[a] = 1; }
+      else if (avail[b1k + k]) { plays[b1k + k] = 1; anyPlays[b1] = 1; }
+      else if (avail[b2k + k]) { plays[b2k + k] = 1; anyPlays[b2] = 1; }
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    if (!anyPlays[i]) continue;
+    const b0 = i * K, f = load[i] * (Fw[fb + game[i]] + Fw[fb + ng + team[i]]), c = cload[i], qb = i * Q;
+    const h = rng.nextI32() >>> 0, r = (h & (N_PERM - 1)) * K, sh = (h >>> 10) & (K - 1);
+    for (let k = 0; k < K; k++) {
+      if (!plays[b0 + k]) continue;
+      const s = (perm[r + k] + sh) & (K - 1);
+      const u = uOf(f + c * ndtri0((s + rng.random()) * invK));
+      const i0 = u >= Q - 2 ? Q - 2 : u | 0, fr = u - i0, b = qb + i0;
+      let x = q[b] + fr * (q[b + 1] - q[b]);
+      if (w > 0) {
+        const lv = loglev[b0 + k] + rng.normal() * stepSd[w - levWeek[b0 + k]];
+        loglev[b0 + k] = lv;
+        levWeek[b0 + k] = w;
+        x *= Math.exp(lv + drift);
+      } else if (locked && started[i]) x = pts0[i] + fracLeft[i] * x; // a game under way carries its points so far
+      score[b0 + k] = x;
+    }
+  }
+  // lineup totals: each distinct slot triple once, then the teams' rows slot by slot (as teamScore adds them) and
+  // the variants' rows as their plan's first row plus the slots that differ
+  for (let j = 0; j < nTrip; j++) {
+    const a = trip[3 * j] * K, b1 = trip[3 * j + 1] * K, b2 = trip[3 * j + 2] * K, o = j * K;
+    for (let k = 0; k < K; k++) tv[o + k] = avail[a + k] ? score[a + k] : avail[b1 + k] ? score[b1 + k] : avail[b2 + k] ? score[b2 + k] : 0;
+  }
+  const { S, T } = E, of = E.of[w], tb = E.tb[w], off = E.rowOff[w], plans = E.plans;
+  const sumRow = (u) => {
+    const o = tb + u * K;
+    for (let k = 0; k < K; k++) tot[o + k] = 0;
+    for (let s = 0; s < S; s++) {
+      const t = of[u * S + s] * K;
+      for (let k = 0; k < K; k++) tot[o + k] += tv[t + k];
+    }
+  };
+  for (let t = 0; t < T; t++) sumRow(t);
+  for (let pi = 0; pi < plans.length; pi++) if (w >= plans[pi].wi0) sumRow(off[pi]);
+  const dl = E.delta[w];
+  for (let j = 0; j < dl.length;) {
+    const o = tb + dl[j] * K, ob = tb + dl[j + 1] * K, nc = dl[j + 2];
+    j += 3;
+    for (let k = 0; k < K; k++) tot[o + k] = tot[ob + k];
+    for (let e = 0; e < nc; e++, j += 2) {
+      const t0 = dl[j] * K, t1 = dl[j + 1] * K;
+      for (let k = 0; k < K; k++) tot[o + k] += tv[t1 + k] - tv[t0 + k];
+    }
+  }
+}
+
+/**
+ * Season / elimination sims for one job of G groups. job: {ci, G, seed, rounds}. Returns sums to be added across
+ * jobs: chops (T * W) and wins (T) over `seasons` recombined seasons, for every team with my roster as it is; and
+ * per plan and roster variant, wins over `pairs` pairings of my paths with the rivals' paths, and differs: the
+ * paths (of `paths`) on which, as drawn, the variant's season ends differently (won or not) from that of its case's
+ * first variant. That is what plain paired sims would count, so it gives the variance they would have had.
+ * Round 0 is the paths as drawn, so with rounds = 1 the teams' odds are plain Monte Carlo on stratified draws.
+ */
+export function seasonGroups(E, job) {
+  const { U, plans, K, T, W, me_t, wLo, tot, tb } = E, { ci, G, seed } = job, R = job.rounds ?? ROUNDS;
+  const rng = new Rng(seed, ci), F = drawFactors(E, G, rng);
+  const chops = new Float64Array(T * W), wins = new Float64Array(T);
+  const out = plans.map((p) => ({ wins: new Float64Array(p.V), differs: new Float64Array(p.V) }));
+  const pathOf = new Int32Array(R * T), alive = new Int32Array(T), at = new Int32Array(T), own = new Uint8Array(K);
+  // A case's chop lines, one per path: the lowest alive rival each week if I survive. By week, the lines from lowest
+  // up (sLo; sMe: I lose a tie with it) and, for every count c, the set of the c lowest lines as bits (pre). A score
+  // clears a prefix of that order, so the lines one of my paths survives all season are the AND of one prefix per
+  // week. NP pads the sorted lines to a power of two with lines nothing clears, for a search without branches.
+  const NP = 2 * K, lineLo = new Float64Array(W * K), lineMe = new Uint8Array(W * K), sIdx = new Int32Array(K);
+  const sLo = new Float64Array(W * NP).fill(Infinity), sMe = new Uint8Array(W * NP).fill(1), pre = new Int32Array(W * (K + 1));
+  const rank = new Int32Array(W * Math.max(...E.cases.flat().map((c) => c.maxRows)) * K);
+  for (let g = 0; g < G; g++) {
+    E.loglev.fill(0);
+    E.levWeek.fill(0);
+    E.outLeft.fill(0);
+    for (let w = wLo; w < W; w++) drawGroupWeek(E, w, F[w], g * E.nF[w], rng);
+    for (let j = 0; j < R * T; j++) pathOf[j] = j < T ? 0 : (rng.nextI32() >>> 0) & (K - 1); // round 0: as drawn
+    if (job.onGroup) job.onGroup(E, pathOf, R); // tests: check this group's sums against brute force
+    // 1. every team's odds with my roster as it is: recombined seasons
+    if (wLo === 0)
+      for (let r = 0; r < R; r++)
+        for (let j = 0; j < K; j++) {
+          for (let t = 0; t < T; t++) {
+            at[t] = t * K + ((j + pathOf[r * T + t]) & (K - 1));
+            alive[t] = t;
+          }
+          for (let w = 0, nA = T; w < W && nA > 1; w++, nA--) { // the lowest alive score goes, the earliest team on a tie
+            const b = tb[w];
+            let lo = Infinity, la = -1;
+            for (let a = 0; a < nA; a++) {
+              const x = tot[b + at[alive[a]]];
+              if (x < lo) { lo = x; la = a; }
+            }
+            chops[alive[la] * W + w]++;
+            for (let a = la; a < nA - 1; a++) alive[a] = alive[a + 1]; // keeps team order
+          }
+          wins[alive[0]]++;
+        }
+    // 2. my roster variants: every path of mine against the rivals of every path, case by case
+    for (let pi = 0; pi < plans.length; pi++) {
+      const p = plans[pi], w0 = p.wi0, res = out[pi];
+      for (const cs of E.cases[pi]) {
+        for (let l = 0; l < K; l++) { // path l's rivals: their own elimination
+          let nA = 0;
+          for (let t = 0; t < T; t++) if (t !== me_t && cs.mask[t]) alive[nA++] = t;
+          for (let w = w0; w < W; w++, nA--) {
+            const b = tb[w] + l;
+            let lo = Infinity, la = -1;
+            for (let a = 0; a < nA; a++) {
+              const x = tot[b + alive[a] * K];
+              if (x < lo) { lo = x; la = a; }
+            }
+            lineLo[w * K + l] = lo;
+            lineMe[w * K + l] = la >= 0 && me_t < alive[la] ? 1 : 0;
+            for (let a = la; a >= 0 && a < nA - 1; a++) alive[a] = alive[a + 1];
+            if (la < 0) nA++; // nobody left: the line stays at infinity
+          }
+        }
+        for (let w = w0; w < W; w++) {
+          const sb = w * NP, pb = w * (K + 1);
+          for (let l = 0; l < K; l++) { // insertion sort by (line, I lose a tie): a score clears the lines below it and the ties it wins
+            const lo = lineLo[w * K + l], me = lineMe[w * K + l];
+            let a = l;
+            for (; a > 0 && (sLo[sb + a - 1] > lo || (sLo[sb + a - 1] === lo && sMe[sb + a - 1] > me)); a--) {
+              sLo[sb + a] = sLo[sb + a - 1];
+              sMe[sb + a] = sMe[sb + a - 1];
+              sIdx[a] = sIdx[a - 1];
+            }
+            sLo[sb + a] = lo;
+            sMe[sb + a] = me;
+            sIdx[a] = l;
+          }
+          pre[pb] = 0;
+          for (let c = 0; c < K; c++) pre[pb + c + 1] = pre[pb + c] | (1 << sIdx[c]);
+        }
+        // how many lines each distinct row clears on each of my paths, week by week
+        const mr = cs.maxRows * K;
+        for (let w = w0; w < W; w++) {
+          const rows = cs.rows[w], sb = w * NP, ro = w * mr;
+          for (let u = 0; u < rows.length; u++)
+            for (let m = 0; m < K; m++) {
+              const x = tot[rows[u] + m];
+              if (u > 0 && x === tot[rows[0] + m]) { // most variants score what the case's first one does on most paths
+                rank[ro + u * K + m] = rank[ro + m];
+                continue;
+              }
+              let c = 0;
+              for (let st = K; st > 0; st >>= 1) { // (a line below my score, or a tie I win) * st: no branch to mispredict
+                const e = sb + c + st - 1;
+                c += ((sLo[e] < x) | ((sLo[e] === x) & (sMe[e] ^ 1))) * st;
+              }
+              rank[ro + u * K + m] = c;
+            }
+        }
+        const rowOf = cs.rowOf;
+        for (let a = 0; a < cs.vars.length; a++) {
+          let nw = 0, nd = 0;
+          for (let m = 0; m < K; m++) {
+            let b = -1; // the lines my path m survives all season, as bits
+            for (let w = w0; w < W; w++) b &= pre[w * (K + 1) + rank[w * mr + rowOf[a * W + w] * K + m]];
+            nw += popcount(b);
+            const won = (b >>> m) & 1; // against its own path's rivals: the season as drawn
+            if (a === 0) own[m] = won;
+            else nd += won ^ own[m];
+          }
+          res.wins[cs.vars[a]] += nw;
+          res.differs[cs.vars[a]] += nd;
+        }
+      }
+    }
+  }
+  return { chops, wins, plans: out, seasons: wLo === 0 ? G * K * R : 0, pairs: G * K * K, paths: G * K };
 }
 
 const bin = (x) => Math.trunc(Math.min(Math.max(x * 2, 0), 399));
+
+function popcount(y) {
+  y -= (y >>> 1) & 0x55555555;
+  y = (y & 0x33333333) + ((y >>> 2) & 0x33333333);
+  return Math.imul((y + (y >>> 4)) & 0x0f0f0f0f, 0x01010101) >>> 24;
+}
+
+/**
+ * This week alone, plain Monte Carlo, on a season plan whose first week it is: sums over C sims of every team's chop
+ * with my roster as it is (chops), my chop per roster variant (firstOut) and the histograms of the lowest rival
+ * score and mine.
+ */
+export function week0Chunk(U, plan, ci, C, seed) {
+  const { S, T, V, me_t } = plan, L = 3 * S, rows = plan.mine[0], of = plan.mineOf[0], nRows = rows.length / L;
+  const rng = new Rng(seed, ci), { score, avail, G, T: TT } = scratch(U), st = pathState(U.n);
+  const chops = new Float64Array(T), firstOut = new Float64Array(V), lineHist = new Float64Array(400), myHist = new Float64Array(400);
+  const mine = new Float64Array(nRows);
+  for (let c = 0; c < C; c++) {
+    drawWeek(U, 0, rng, st, score, avail, G, TT);
+    let lo = Infinity, lt = -1, line = Infinity, t1 = -1; // lowest of all (the earliest team on a tie), lowest rival
+    for (let t = 0; t < T; t++) {
+      const x = teamScore(score, avail, plan.opp[0], t * L, S);
+      if (x < lo) { lo = x; lt = t; }
+      if (t !== me_t && x < line) { line = x; t1 = t; }
+    }
+    chops[lt]++;
+    for (let u = 0; u < nRows; u++) mine[u] = teamScore(score, avail, rows, u * L, S);
+    for (let v = 0; v < V; v++) {
+      const m = mine[of[v]];
+      if (m < line || (m === line && me_t < t1)) firstOut[v]++;
+    }
+    lineHist[bin(line)]++;
+    myHist[bin(mine[of[0]])]++;
+  }
+  return { chops, firstOut, lineHist, myHist };
+}
 
 /** One-week lineup sims: P(my lineup scores below the lowest rival), mean and sum of squares per lineup. */
 export function weekChunk(U, job, ci, C, seed) {

@@ -1,6 +1,6 @@
 // A made-up guillotine league in the `raw` shape, so the whole pipeline can run on CI without real data.
 // 8 teams, one chopped per week from week 1; it's week 3 with two teams gone and one auction run so far
-// (both, with `waived`).
+// (both, with `waived`). liveRaw() is that league with week 3 under way.
 import { Rng } from "../src/rng.js";
 
 const POSN = { QB: 24, RB: 50, WR: 60, TE: 26 };
@@ -76,4 +76,23 @@ export function syntheticRaw({ bids = 6, budget = 100, waived = false } = {}) {
     rosters, schedule, matchups, tx, live: null,
     proj: { season: proj, calib: calibProj }, stats: { season: stats, calib: calibStats },
   };
+}
+
+/**
+ * The `waived` league with week 3 under way: a third of its games are final, a third are in progress and a third are
+ * still to play, so some starters are locked with points on the board.
+ */
+export function liveRaw() {
+  const raw = syntheticRaw({ waived: true }), games = {}, stats = {};
+  raw.schedule.filter((g) => g.week === 3).forEach((g, i) => {
+    const state = ["post", "in", "pre"][i % 3];
+    games[g.game_id] = { away: g.away, home: g.home, state, frac_left: { post: 0, in: 0.4, pre: 1 }[state], clock: null };
+    g.status = { post: "complete", in: "in_game", pre: "pre_game" }[state];
+  });
+  for (const [pid, x] of Object.entries(raw.proj.season[3])) {
+    const g = games[x.game];
+    if (g && g.state !== "pre") stats[pid] = { game: x.game, stats: { fpts: x.stats.fpts * (1 - g.frac_left) * 0.9 } };
+  }
+  raw.live = { week: 3, fetched_at: raw.meta.fetched_at, games, stats };
+  return raw;
 }

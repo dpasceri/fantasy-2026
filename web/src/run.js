@@ -1,12 +1,11 @@
 // Port of guillotine/run.py: run every sim and build the results object (same schema as out/results.json),
 // which report.js renders as the cheat sheet.
-import { BidModel, faabHistory, gain, priceBacktest, pWinCurve, sortDollars, topRivalBids } from "./auction.js";
+import { BidModel, faabHistory, gain, priceBacktest, pWinCurve, topRivalCdf, topRivalQuantile } from "./auction.js";
 import { addTotals, MIN_GAIN, summarize } from "./dynamic.js";
 import { bestLineup, POS } from "./league.js";
 import { fit, PlayerModel } from "./model.js";
-import { Rng } from "./rng.js";
-import { CHUNK, enumerateLineups, Universe } from "./sim.js";
-import { pyRound, quantileSorted, searchsorted } from "./stats.js";
+import { CHUNK, enumerateLineups, GROUP, GROUP_LIVE, GROUPS, Universe } from "./sim.js";
+import { pyRound, searchsorted } from "./stats.js";
 
 export const BID_GRID = [0, 10, 20, 30, 45, 60, 80, 100, 125, 150, 165]; // in a $200 league; scaled to the league's FAAB
 export const STRESS = [0.7, 0.3]; // rivals bid ~2x as often (logit +0.7) and ~35% higher (log +0.3)
@@ -16,6 +15,19 @@ export const POLICY = { m_early: 0.75, m_late: 0.75, switch_week: 12 };
 // guards against picking the luckiest of 16 cells). Tuned leagues tie within noise and keep 0.75x.
 export const SWITCH_Z = 3.0;
 const PATH_CHUNK = 200;
+// Season paths drawn at first. Stratified and recombined (see sim.js), each is worth several plain ones: 3.0 for the
+// number it helps least and 4 to 8 for the value of a pickup, on a 9-team league with 8 weeks to go (10 million paths
+// against plain sims). SEASON_PLAIN is what they replaced and have to match: 640,000 plain paths for every team's odds
+// and my pickups, 320,000 for auction values. Every run measures whether they did (seasonPrecision) and draws more
+// paths, up to SEASON_MAX times as many, when they did not.
+export const SEASON_PATHS = 320_000;
+export const SEASON_PLAIN = [640_000, 320_000];
+const SEASON_MAX = 2.5, CHECK_JOBS = 16; // jobs it takes to measure the error
+export const WEEK0_SIMS = 640_000; // plain sims of this week alone, for this week's own numbers
+// Season paths per bid in the forced-bid grids: four times the 4,000 they were, for half the noise in each bid's win
+// chance. Over 8 reruns of a 9-team league the best bid then held to the dollar for 7 of 12 players (3 of 12 at 4,000)
+// and moved by $20 at most. A player's bids share most of the work (see dynamic.js).
+export const GRID_PATHS = 16_000;
 export const PEEK_AT = 0.95; // a rival this likely to be chopped this week makes next week worth a look
 
 /**
@@ -94,7 +106,7 @@ function seasonPlan(U, teams, rosters, me, variants, { alive0 = null, wi0 = 0 } 
   const S = U.lg.slots.length, L = 3 * S, T = teams.length, V = variants.length, W = U.weeks.length;
   // mine[wi] holds each distinct lineup once and mineOf[wi] maps variants to it: adding a bench-level player
   // usually leaves the starters and subs unchanged, and an identical lineup scores identically
-  const plan = { S, T, V, me_t: teams.indexOf(me), wi0, opp: {}, mine: {}, mineOf: {}, trip: {}, mineTrip: {}, alive0: new Uint8Array(V * T).fill(1) };
+  const plan = { S, T, V, me_t: teams.indexOf(me), wi0, opp: {}, mine: {}, mineOf: {}, alive0: new Uint8Array(V * T).fill(1) };
   if (alive0) alive0.forEach((row, v) => row.forEach((a, t) => { plan.alive0[v * T + t] = a ? 1 : 0; }));
   for (let wi = wi0; wi < W; wi++) {
     plan.opp[wi] = new Int32Array(T * L);
@@ -110,7 +122,6 @@ function seasonPlan(U, teams, rosters, me, variants, { alive0 = null, wi0 = 0 } 
     });
     plan.mine[wi] = new Int32Array(rows.length * L);
     rows.forEach((idx, u) => plan.mine[wi].set(idx, u * L));
-    [plan.trip[wi], plan.mineTrip[wi]] = slotTriples(plan.mine[wi], S, U.n + 1);
   }
   return plan;
 }
@@ -136,14 +147,79 @@ function slotTriples(rows, S, n1) {
 
 const nChunksOf = (nSims) => Math.max(1, Math.floor(nSims / CHUNK));
 
-/** Season sims (run_season) on the plan the pool holds under `key`. Every variant's result is its own: it doesn't depend on the others. */
-async function runSeason(pool, key, plan, W, nSims, seed, onDone) {
-  const { V, T } = plan, nChunks = nChunksOf(nSims);
-  const parts = await pool.map("season", Array.from({ length: nChunks }, (_, ci) => ({ plan: key, ci, C: CHUNK, seed })), onDone);
-  const N = nChunks * CHUNK, sumUp = (k) => parts.reduce((a, p) => { p[k].forEach((x, i) => { a[i] += x; }); return a; }, new Float64Array(parts[0][k].length));
-  const chops = sumUp("chops"), wins = sumUp("wins");
-  return { N, V, T, W, chop: (v, t, w) => chops[(v * T + t) * W + w] / N, win: (v, t) => wins[v * T + t] / N,
-    lineHist: sumUp("lineHist").subarray(0, 400), myHist: sumUp("myHist").subarray(0, 400) };
+/**
+ * What a set of season jobs is worth, from the spread of the jobs' own estimates. For every number of any size the
+ * variance of the jobs' mean is set against the variance plain[i] plain paths would have had: p(1 - p) / n for odds,
+ * and for a pickup's or auction player's value the paired variance, which the jobs count as they go (differs).
+ * parts: seasonGroups results; bases[i][v]: the variant that plan i's variant v is valued against.
+ * Returns {short, worth}: short is how many times more paths it takes for (a) each kind of number to be 25% more
+ * precise than its plain target on average and (b) no team's odds to be measured more than 30% short of it (one
+ * number's variance from a few dozen jobs is itself noisy, hence the allowance); 1 or less is enough. worth is the
+ * plain paths the teams' odds are worth, on average.
+ */
+export function seasonPrecision(parts, bases, plain) {
+  const J = parts.length, T = parts[0].wins.length, W = parts[0].chops.length / T, { seasons, pairs, paths } = parts[0];
+  const spread = (get, n) => { // per entry: the jobs' mean and the variance of that mean
+    const m = new Float64Array(n), v = new Float64Array(n);
+    for (const p of parts) for (let i = 0; i < n; i++) { const x = get(p, i); m[i] += x; v[i] += x * x; }
+    for (let i = 0; i < n; i++) { m[i] /= J; v[i] = Math.max(v[i] / J - m[i] * m[i], 0) / (J - 1); }
+    return [m, v];
+  };
+  const kinds = []; // per kind of number: its ratios of variance to the plain target's
+  const odds = [];
+  const [cm, cv] = spread((p, i) => p.chops[i] / seasons, T * W), [wm, wv] = spread((p, i) => p.wins[i] / seasons, T);
+  const add = (list, p, v, n) => { if (p > 0.005 && p < 0.995) list.push((v * n) / (p * (1 - p))); };
+  for (let i = 0; i < T * W; i++) if (i % W > 0) add(odds, cm[i], cv[i], plain[0]); // this week's odds come from week0Chunk
+  for (let t = 0; t < T; t++) add(odds, wm[t], wv[t], plain[0]);
+  kinds.push(odds);
+  bases.forEach((base, pi) => {
+    const V = base.length, levels = [], values = [];
+    const [lm, lv] = spread((p, v) => p.plans[pi].wins[v] / pairs, V), [dm, dv] = spread((p, v) => (p.plans[pi].wins[v] - p.plans[pi].wins[base[v]]) / pairs, V);
+    for (let v = 0; v < V; v++) {
+      if (base[v] === v) { if (pi > 0) add(levels, lm[v], lv[v], plain[pi]); continue; } // my win odds in an auction's case
+      const q = parts.reduce((a, p) => a + p.plans[pi].differs[v], 0) / (J * paths), plainVar = q - dm[v] * dm[v];
+      if (q > 1e-3 && plainVar > 0) values.push((dv[v] * plain[pi]) / plainVar);
+    }
+    kinds.push(levels, values);
+  });
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  let short = odds.length ? Math.max(...odds) / 1.3 : 0;
+  for (const k of kinds) if (k.length) short = Math.max(short, mean(k) / 0.8);
+  return { short, worth: odds.length ? plain[0] / mean(odds) : null };
+}
+
+/**
+ * Season sims on the plans the pool holds under `keys`, all on the same draws (sim.js's seasonGroups), in groups of K
+ * paths: nPaths of them, then more while seasonPrecision finds them short of the plain paths in `plain`. Returns
+ * {N, worth, chop(t, w), win(t)} for every team with my roster as it is, and plans: per plan {win(v)} for my roster variants.
+ */
+export async function runSeason(pool, keys, nPaths, seed, K, bases, plain, onDone = () => {}) {
+  const G = (GROUPS * GROUP) / K, nJobs = Math.max(1, Math.round(nPaths / (G * K)));
+  let parts = [];
+  const more = async (n) => { parts = parts.concat(await pool.map("season", Array.from({ length: n }, (_, i) => ({ plans: keys, ci: parts.length + i, G, K, seed })), onDone)); };
+  await more(nJobs);
+  let check = parts.length >= CHECK_JOBS ? seasonPrecision(parts, bases, plain) : null; // too few jobs (a quick run): not measured
+  for (let round = 0; round < 3 && check; round++) {
+    const want = Math.min(Math.ceil(parts.length * check.short), Math.round(nJobs * SEASON_MAX));
+    if (want <= parts.length) break;
+    await more(want - parts.length);
+    check = seasonPrecision(parts, bases, plain);
+  }
+  const add = (get) => parts.reduce((a, p) => { get(p).forEach((x, i) => { a[i] += x; }); return a; }, new Float64Array(get(parts[0]).length));
+  const tot = (k) => parts.reduce((s, p) => s + p[k], 0);
+  const chops = add((p) => p.chops), wins = add((p) => p.wins), seasons = tot("seasons"), pairs = tot("pairs"), W = chops.length / wins.length;
+  return { N: tot("paths"), worth: check && check.worth !== null ? Math.round(check.worth) : null, short: check ? check.short : null,
+    chop: (t, w) => chops[t * W + w] / seasons, win: (t) => wins[t] / seasons,
+    plans: keys.map((_, i) => { const w = add((p) => p.plans[i].wins); return { win: (v) => w[v] / pairs }; }) };
+}
+
+/** This week alone on the plan under `key`, plain sims (sim.js's week0Chunk): {N, chop(t), firstOut(v), lineHist, myHist}. */
+async function runWeek0(pool, key, nSims, seed, onDone) {
+  const nChunks = nChunksOf(nSims), N = nChunks * CHUNK;
+  const parts = await pool.map("week0", Array.from({ length: nChunks }, (_, ci) => ({ plan: key, ci, C: CHUNK, seed })), onDone);
+  const add = (k) => parts.reduce((a, p) => { p[k].forEach((x, i) => { a[i] += x; }); return a; }, new Float64Array(parts[0][k].length));
+  const chops = add("chops"), out = add("firstOut");
+  return { N, chop: (t) => chops[t] / N, firstOut: (v) => out[v] / N, lineHist: add("lineHist"), myHist: add("myHist") };
 }
 
 async function runWeek(pool, key, V, nSims, seed, onDone) {
@@ -163,7 +239,9 @@ function pathJobs(nSettings, nPaths, size) {
 /** dynamic.run: P(win) etc. per setting. Same chunk index = same draws, so settings share random numbers. */
 async function runDynamic(pool, settings, nPaths, seed, onDone) {
   const [nChunks, nGroups] = pathJobs(settings.length, nPaths, pool.size);
-  const groups = Array.from({ length: nGroups }, (_, g) => settings.map((_, i) => i).filter((i) => i % nGroups === g));
+  // blocks of neighbors: a player's bid grid stays in one job, where its bids share work (see dynamic.js)
+  const per = Math.ceil(settings.length / nGroups);
+  const groups = Array.from({ length: nGroups }, (_, g) => settings.map((_, i) => i).filter((i) => Math.floor(i / per) === g)).filter((g) => g.length);
   const jobs = [];
   for (let ci = 0; ci < nChunks; ci++) for (const grp of groups) jobs.push({ ci, C: PATH_CHUNK, seed, settings: grp.map((i) => settings[i]), grp });
   const parts = await pool.map("paths", jobs.map(({ grp, ...j }) => j), onDone);
@@ -187,7 +265,7 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
   const STAGES = 5;
   const stage = (name) => onStage(name, stageNo++, STAGES);
   const tick = (name) => { timings[name] = pyRound((Date.now() - t0) / 1000, 1); };
-  // progress is by rough job cost: a season chunk-week is 1, a paths job W * (2 * settings + 4), a bid curve 0.16
+  // progress is by rough job cost: a season chunk-week is 1, a paths job W * (2 * settings + 4), a bid curve 0.01
   let planned = 0, done = 0;
   const prog = (cost) => () => { done += cost; onProgress(done, planned); };
   const pathCost = (nSet, nPaths) => { const [nc, ng] = pathJobs(nSet, nPaths, pool.size); return [nc * ng, (PATH_CHUNK / CHUNK) * (2 * Math.ceil(nSet / ng) + 4)]; };
@@ -255,23 +333,27 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
   await pool.set("plan", plan1);
   await pool.set("dyn", { ctx, base });
   await pool.set("plan2", plan2);
-  const nS = nChunksOf(640_000 / k), nS2 = nChunksOf(320_000 / k), nW8 = nChunksOf(480_000 / k), nCurves = lab2.length - cases.length;
+  const nS = Math.max(1, Math.round(SEASON_PATHS / k / (GROUPS * GROUP))), cS = (W * GROUPS * GROUP) / CHUNK;
+  const nW0 = nChunksOf(WEEK0_SIMS / k);
+  const nW8 = nChunksOf(480_000 / k), nCurves = lab2.length - cases.length;
   const [nD1, cD1] = pathCost(sweep.length, 10_000 / k), [nD2, cD2] = pathCost(12, 10_000 / k), [nP, cP] = pathCost(2, 20_000 / k);
-  const [nD3, cD3] = pathCost(pending ? 6 * grid.length : 12 * grid.length + grid.length, (pending ? 8_000 : 4_000) / k);
-  planned = nS * W + nS2 * (W - win0) + nW8 * 0.3 + nCurves * 0.16 + nD1 * cD1 + nD2 * cD2 + nP * cP + nD3 * cD3;
+  const [nD3, cD3] = pathCost(pending ? 6 * grid.length : 12 * grid.length + grid.length, GRID_PATHS / k);
+  planned = nS * cS + nW0 * 0.15 + nW8 * 0.3 + nCurves * 0.01 + nD1 * cD1 + nD2 * cD2 + nP * cP + nD3 * cD3;
   stage("Season sims");
-  const S_p = runSeason(pool, "plan", plan1, W, 640_000 / k, 1, prog(W));
+  // what each variant is valued against: my roster as it is, with the same rivals
+  const bases = [new Int32Array(variants.length), Int32Array.from(lab2, ([kk]) => vOf.get(kk).get(null))];
+  const S_p = runSeason(pool, ["plan", "plan2"], SEASON_PATHS / k, 1, U.locked.size ? GROUP_LIVE : GROUP, bases, SEASON_PLAIN.map((n) => n / k), prog(cS));
+  const now_p = runWeek0(pool, "plan", WEEK0_SIMS / k, 5, prog(0.15)); // this week's own numbers
   const D1_p = runDynamic(pool, sweep, 10_000 / k, 11, prog(cD1));
-  const S2_p = runSeason(pool, "plan2", plan2, W, 320_000 / k, 3, prog(W - win0));
 
-  const S = await S_p;
+  const S = await S_p, [S1, S2] = S.plans, now = await now_p; // S1, S2: my roster + a free agent, + a player from the next auction
   tick("season sim (static, base + FA adds)");
   const standings = teams.map((t, j) => {
     const lu = bestLineup(lg.slots, ros.get(t).map((p) => [lg.projPts(p, lg.week), p, lg.pos(p)]));
     const st = lg.rosters.get(t).settings;
     let c = 0;
-    return { rid: t, owner: lg.owner(t), faab: lg.faab(t), me: t === me, p_chop_now: S.chop(0, j, 0), p_win: S.win(0, j),
-      survival: weeks.map((_, w) => 1 - (c += S.chop(0, j, w))),
+    return { rid: t, owner: lg.owner(t), faab: lg.faab(t), me: t === me, p_chop_now: now.chop(j), p_win: S.win(j),
+      survival: weeks.map((_, w) => 1 - (c += w ? S.chop(j, w) : now.chop(j))),
       proj_now: pyRound(lu.reduce((s, [, p]) => s + (p ? lg.projPts(p, lg.week) : 0), 0), 1),
       season_pts: pyRound((st.fpts || 0) + (st.fpts_decimal || 0) / 100, 1) };
   });
@@ -280,8 +362,8 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
   const openSpots = Math.max(0, lg.league.roster_positions.filter((s) => s !== "IR").length - nActive);
   const faRows = fas.map((f, i) => ({
     pid: f, player: lg.label(f), pos: lg.pos(f), day: days[f] ?? null, proj_now: pyRound(lg.projPts(f, lg.week), 1),
-    ros_avg: pyRound(rosSum(f, weeks) / weeks.length, 1), d_win: S.win(i + 1, meT) - S.win(0, meT),
-    d_survive_now: S.chop(0, meT, 0) - S.chop(i + 1, meT, 0), inj: lg.info[f].inj,
+    ros_avg: pyRound(rosSum(f, weeks) / weeks.length, 1), d_win: S1.win(i + 1) - S1.win(0),
+    d_survive_now: now.firstOut(0) - now.firstOut(i + 1), inj: lg.info[f].inj,
   })).sort((a, b) => b.d_win - a.d_win);
 
   // 2. this week's lineup: every legal starting lineup, scored on the same draws (small jobs, so they go last and
@@ -304,30 +386,27 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
   const [trip, mineTrip] = slotTriples(myIdx, lg.slots.length, U.n + 1);
   const weekSet = pool.set("week", { S: lg.slots.length, T: teams.length, V: lineups.length, me_t: meT, opp: oppIdx, mine: myIdx, trip, mineTrip });
 
-  // 3. rival bid curves, on the main thread while the workers are busy. Cases go most to least likely chopped;
-  // Rng(17) is consumed in that order, one curve at a time, as before.
+  // 3. rival bid curves (exact, see topRivalCdf), on the main thread while the workers are busy. Cases go most to
+  // least likely chopped.
   stage("Auction values");
-  if (!pending) cases.sort((a, b) => S.chop(0, teams.indexOf(b[0]), 0) - S.chop(0, teams.indexOf(a[0]), 0));
-  const rng = new Rng(17);
+  if (!pending) cases.sort((a, b) => now.chop(teams.indexOf(b[0])) - now.chop(teams.indexOf(a[0])));
   const curveOf = new Map(); // case -> player -> the row's bid-curve fields
   const gcache = new Map(); // weakest starters per roster and week, shared by every player's gain
   for (const [kk, plist] of cases) {
     const others = new Map(teams.filter((t) => t !== me && t !== kk).map((t) => [t, lg.faab(t)]));
     const rows = new Map();
+    await new Promise((ok) => setTimeout(ok, 0)); // let worker results through and keep the page responsive
     for (const i of plist) {
-      await new Promise((ok) => setTimeout(ok, 0)); // let worker results through and keep the page responsive
       const gains = new Map([...others.keys()].map((t) => [t, gain(lg, ros.get(t), i, wLo, wLo + 3, gcache)]));
-      const top = topRivalBids(bm, others, gains, bidLeg, rng, 60_000);
-      const curve = pWinCurve(top, lg.faab(me));
-      const s = sortDollars(top);
+      const cdf = topRivalCdf(bm, others, gains, bidLeg), curve = pWinCurve(cdf, lg.faab(me));
       rows.set(i, {
         gain_me: pyRound(gain(lg, ros.get(me), i, wLo, wLo + 3, gcache), 2),
-        rival_top: Object.fromEntries([0.5, 0.8, 0.9, 0.95].map((q) => [String(q), quantileSorted(s, q)])),
-        p_no_rival_bid: top.filter((x) => x === 0).length / top.length,
+        rival_top: Object.fromEntries([0.5, 0.8, 0.9, 0.95].map((q) => [String(q), topRivalQuantile(cdf, q)])),
+        p_no_rival_bid: cdf[0],
         p_beat_rivals: Object.fromEntries(grid.filter((b) => b <= lg.faab(me)).map((b) => [String(b), curve[b]])),
         rival_gains: [...gains].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, g]) => ({ owner: lg.owner(t), gain: pyRound(g, 2), faab: lg.faab(t) })),
       });
-      prog(0.16)();
+      prog(0.01)();
     }
     curveOf.set(kk, rows);
   }
@@ -351,19 +430,18 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
     .then((d) => { tick("dynamic: power rankings"); return d; });
 
   // 3, continued: the static value of each player in the next auction
-  const S2 = await S2_p;
-  const baseWin = new Map(cases.map(([kk]) => [kk, S2.win(vOf.get(kk).get(null), meT)]));
+  const baseWin = new Map(cases.map(([kk]) => [kk, S2.win(vOf.get(kk).get(null))]));
   const scen = cases.map(([kk, plist]) => {
     const rows = plist.map((i) => {
       const c = curveOf.get(kk).get(i);
       return { pid: i, player: lg.label(i), pos: lg.pos(i), inj: (lg.info[i] || {}).inj ?? null, gain_me: c.gain_me,
-        d_win_static: S2.win(vOf.get(kk).get(i), meT) - baseWin.get(kk), rival_top: c.rival_top, p_no_rival_bid: c.p_no_rival_bid,
+        d_win_static: S2.win(vOf.get(kk).get(i)) - baseWin.get(kk), rival_top: c.rival_top, p_no_rival_bid: c.p_no_rival_bid,
         p_beat_rivals: c.p_beat_rivals, rival_gains: c.rival_gains };
     });
     rows.sort((a, b) => b.d_win_static - a.d_win_static);
     // an assumed chop (a peek at next week) is still an "if", at the odds the week under way gave it
     const sc = { rid: kk, owner: lg.owner(kk), known: !!pending && !pending.assumed,
-      p_chop: pending ? (pending.assumed ? pending.p_chop : 1.0) : S.chop(0, teams.indexOf(kk), 0), base_win: baseWin.get(kk), players: rows };
+      p_chop: pending ? (pending.assumed ? pending.p_chop : 1.0) : now.chop(teams.indexOf(kk)), base_win: baseWin.get(kk), players: rows };
     if (pending && pending.assumed) sc.assumed = true;
     return sc;
   });
@@ -377,7 +455,7 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
       for (const b of grid)
         if (b <= B) jobs.push({ ...pol, budget: B, force: { [r.pid]: b }, _pid: r.pid, _bid: b, _k: sc.rid, ...(pending ? {} : { chopped0: sc.rid }) });
   const stressJobs = jobs.length ? jobs.filter((j) => j._pid === jobs[0]._pid && j._k === jobs[0]._k).map((j) => ({ ...j, rival_boost: STRESS })) : [];
-  const D3_p = (jobs.length ? runDynamic(pool, [...jobs, ...stressJobs], (pending ? 8_000 : 4_000) / k, 13, prog(cD3)) : Promise.resolve([]))
+  const D3_p = (jobs.length ? runDynamic(pool, [...jobs, ...stressJobs], GRID_PATHS / k, 13, prog(cD3)) : Promise.resolve([]))
     .then((d) => { tick(`dynamic: forced-bid grid (${jobs.length + stressJobs.length} settings)`); return d; });
   await weekSet;
   const W8_p = runWeek(pool, "week", lineups.length, 480_000 / k, 2, prog(0.3)).then((d) => { tick(`lineup sim (${lineups.length} lineups)`); return d; });
@@ -415,7 +493,7 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
     const rows = teams.map((t) => {
       const st = (lg.starters(t, lg.week) || []).filter(Boolean).map((p) => lg.gameState(p));
       return { owner: lg.owner(t), me: t === me, pts: pyRound(st.reduce((s, x) => s + x[2], 0), 1),
-        left: st.filter((x) => x[0] !== "post").length, p_chop: S.chop(0, teams.indexOf(t), 0) };
+        left: st.filter((x) => x[0] !== "post").length, p_chop: now.chop(teams.indexOf(t)) };
     });
     live = { as_of: lg.live.fetched_at, n: Object.fromEntries(["pre", "in", "post"].map((s) => [s, G.filter((g) => g.state === s).length])),
       in_progress: G.filter((g) => g.state === "in").map((g) => `${g.away} @ ${g.home} ${g.clock || ""}`.trim()),
@@ -429,10 +507,10 @@ export async function runAll(lg, pool, { k = 1, onStage = () => {}, onProgress =
     season: lg.season, week: lg.week, final_week: lg.final_week, me: lg.owner(me), faab_me: B, open_spots: openSpots, weeks,
     threads: pool.size, pending: pending ? { owner: lg.owner(pending.rid), n: pendPool.length, ...(pending.assumed ? { assumed: true, p_chop: pending.p_chop } : {}) } : null,
     live, timings,
-    sims: { season: S.N, lineups: W8.N, auction_static: S2.N, dynamic_paths: D1.length ? D1[0].n : 0, grid_paths: D3.length ? D3[0].n : 0 },
+    sims: { season: now.N, season_paths: S.N, season_worth: S.worth, lineups: W8.N, auction_static: S.N, dynamic_paths: D1.length ? D1[0].n : 0, grid_paths: D3.length ? D3[0].n : 0 },
     standings: [...standings].sort((a, b) => b.p_win - a.p_win), power, faab_pace: pace,
-    chop_line: quantilesFromHist(S.lineHist, [0.1, 0.25, 0.5, 0.75, 0.9]),
-    my_score: quantilesFromHist(S.myHist, [0.1, 0.25, 0.5, 0.75, 0.9]),
+    chop_line: quantilesFromHist(now.lineHist, [0.1, 0.25, 0.5, 0.75, 0.9]),
+    my_score: quantilesFromHist(now.myHist, [0.1, 0.25, 0.5, 0.75, 0.9]),
     roster: ros.get(me).map((p) => ({ pid: p, player: lg.label(p), pos: lg.pos(p), inj: lg.info[p].inj, day: days[p] ?? null,
       ir: reserve.has(p), proj: weeks.map((w) => pyRound(lg.projPts(p, w), 1)) })),
     labels,
