@@ -58,15 +58,13 @@ async function load(raw) {
   say(`${league.name} loaded.`);
 }
 
-// One worker per core, less one for the page. Safari reports 4 cores for anything with fewer than 8 (an anti-tracking
-// cap) and every iPhone since 2017 has 6, so an iPhone counts as 6. ?cores=N sets the number of workers outright, to
-// time one count against another; the sheet's numbers are the same on any number of workers.
+// One worker per core the browser reports, less one for the page. Safari reports 4 cores for anything with fewer than
+// 8 (an anti-tracking cap), so a 6-core iPhone gets 3 workers. ?cores=N sets the number of workers outright, to time
+// one count against another; the sheet's numbers are the same on any number of workers.
 function workerCount() {
   const asked = Number(new URLSearchParams(location.search).get("cores"));
   if (Number.isInteger(asked) && asked >= 1) return Math.min(16, asked);
-  const reported = navigator.hardwareConcurrency || 4;
-  const cores = /iPhone/.test(navigator.userAgent) ? Math.max(reported, 6) : reported;
-  return Math.max(1, Math.min(16, cores - 1));
+  return Math.max(1, Math.min(16, (navigator.hardwareConcurrency || 4) - 1));
 }
 
 function makePool() {
