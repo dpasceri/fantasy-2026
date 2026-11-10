@@ -16,11 +16,8 @@ main > * { max-width: 560px; }
 a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 2px; }
 a:hover { text-decoration-color: var(--ink-2); }
 
-header { margin: 0 0 40px; }
-h1 { font: 600 clamp(36px, 7vw, 48px)/1 var(--sans); letter-spacing: -.015em; margin: 0 0 14px; }
-.lede { margin: 0; color: var(--ink-2); }
+h1 { font: 600 clamp(36px, 7vw, 48px)/1 var(--sans); letter-spacing: -.015em; margin: 0 0 40px; }
 
-.lbl { display: block; margin: 0 0 6px; font: 600 10.5px/1.4 var(--sans); text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
 form, #team-box { margin: 0 0 20px; }
 .row { display: flex; gap: 8px; }
 input, select, button { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--field); border-radius: 3px;
@@ -54,13 +51,12 @@ progress::-moz-progress-bar { background: var(--ink); }
 #status ul { margin: 6px 0 0; padding-left: 2ch; }
 
 .fine { margin: 40px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--muted); }
-.fine a { margin-left: 6px; }
 
 /* The sheet takes the whole viewport once it's there and scrolls inside, so its section rail stays pinned. */
 #sheet-box { display: flex; flex-direction: column; height: 100vh; height: 100dvh; border-top: 1px solid var(--rule); }
 .sheet-bar { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 16px; height: 36px; padding: 0 16px;
   border-bottom: 1px solid var(--rule); font-size: 13px; }
-#sheet-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--muted); }
+#run-stat { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--mono); color: var(--muted); }
 #peek-box { margin-left: auto; display: flex; align-items: center; gap: 10px; } /* shrinks by its note, never its button */
 #peek-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 #peek { min-height: 0; padding: 2px 10px; font-size: 12.5px; white-space: nowrap; }

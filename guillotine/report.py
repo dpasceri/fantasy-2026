@@ -553,7 +553,7 @@ def render(r, path=None):
         for i, x in enumerate(pw, start=1))
     broke = [x['owner'] for x in pw if x['faab'] <= usd(15)]
     broke_txt = (', '.join(esc(b) for b in broke) + f' have ${usd(15)} or less') if broke else 'nobody is broke yet'
-    power_box = f"""<section class="box"><h2>Power rankings <small>who wins with the auctions played out · {r['sims']['dynamic_paths']:,}+ season paths</small></h2><div class="inner">
+    power_box = f"""<section class="box"><h2>Power rankings <small>{r['sims']['dynamic_paths']:,}+ season paths</small></h2><div class="inner">
   <div class="tbl"><table><thead><tr><th>#</th><th>Team</th><th class="r">Win league</th><th class="r">Frozen rosters</th><th class="r">FAAB</th><th class="r">Lineup proj /wk</th><th class="r">Weakest week</th><th>Chop wk {wk}</th><th class="r">Weeks survived of {len(weeks)}</th></tr></thead><tbody>{pw_rows}</tbody></table></div>
   <p class="note"><b>Win league</b> plays every remaining week and auction, with every manager, you included, bidding the way they have all season. That's the fair ranking; under your name is your chance if you bid the recommended way instead. <b>Frozen rosters</b> is the same race with no more auctions: it rewards teams that already spent ({broke_txt}) and ignores what money will buy. Lineup proj is the average projected best lineup over weeks {weeks[0]}–{weeks[-1]}; the weakest week is the bye-week hole most likely to get them chopped.</p>
 </div></section>"""
@@ -605,7 +605,7 @@ def render(r, path=None):
 
 <div class="board">
 {live_box}
-<section class="box"><h2>The calls <small>start here</small></h2><div class="inner"><ol class="calls">{call_html()}</ol></div></section>
+<section class="box"><h2>The calls</h2><div class="inner"><ol class="calls">{call_html()}</ol></div></section>
 
 {power_box}
 
@@ -646,7 +646,7 @@ def render(r, path=None):
   <div class="tbl"><table><thead><tr><th>Wk</th><th>Player</th><th class="r">Cleared</th><th class="r">Model median</th><th class="r">Model 80% range</th></tr></thead><tbody>{pb_rows}</tbody></table></div>
 </div></section>
 
-<section class="box"><h2>The math: scores <small>back of the sheet, 1 of 3</small></h2><div class="inner math">
+<section class="box"><h2>The math: scores</h2><div class="inner math">
   <h3>1 · The chop</h3>
   <p>Each week, the lowest score among the alive teams is chopped. Your weekly risk is the probability that your total is below the minimum of the others, which depends on the whole joint distribution, not just averages:</p>
   <div class="eq">P(chop) = P( S_you &lt; min_j S_j )
@@ -661,7 +661,7 @@ a = QB {cop['loadings']['QB']}, RB {cop['loadings']['RB']}, WR {cop['loadings'][
   <p>Measured residual correlations: QB–WR {cop['same_team_corr'].get('QB-WR')}, QB–TE {cop['same_team_corr'].get('QB-TE')}, RB–RB {cop['same_team_corr'].get('RB-RB')} (committees cannibalize), opposing QBs {cop['opp_team_corr'].get('QB-QB')} (shootouts). Future weeks add a random-walk drift in each player's level (sd 0.10 per week, log scale) and a 2% weekly chance of a multi-week injury (mean 3 weeks).</p>
 </div></section>
 
-<section class="box"><h2>The math: bids <small>back of the sheet, 2 of 3</small></h2><div class="inner math">
+<section class="box"><h2>The math: bids</h2><div class="inner math">
   <h3>3 · Rivals' bids</h3>
   <div class="eq">gain_ji = mean over the next 4 wks of
           max(0, proj_iw − weakest starter i could replace on team j)
@@ -675,7 +675,7 @@ ln(bid | bids) = {sz['b0']} + {sz['b_gain']}·gain + {sz['b_log_budget']}·ln(bu
                 then your best policy in every later auction)</div>
 </div></section>
 
-<section class="box"><h2>The math: checks <small>back of the sheet, 3 of 3</small></h2><div class="inner math">
+<section class="box"><h2>The math: checks</h2><div class="inner math">
   <h3>5 · Why Monte Carlo, and why not just more of it</h3>
   <p>The quantities here are minimums of correlated, skewed, zero-inflated sums run through lineup logic and elimination, so there's no clean closed form. Past about a million sims the sampling error (±{100 * (0.05 * 0.95 / max(sims['season'], 1)) ** 0.5:.2f} pts on a 5% risk) is far below the model error in the projections. So the CPU goes to <b>common random numbers</b> instead: every lineup, pickup and bid is scored on the same simulated weeks, which makes differences between choices sharper than more draws would. The rest goes into the {len(D['sweep'])}-policy and per-bid season sweeps.</p>
   <h3>6 · Does it work?</h3>
@@ -684,13 +684,13 @@ ln(bid | bids) = {sz['b0']} + {sz['b_gain']}·gain + {sz['b_log_budget']}·ln(bu
   <p>Frozen-roster numbers ignore the auctions (the dynamic sims don't). Rivals are assumed to start their max-projection lineup. Bid behavior is fit from about 7 weeks of history, so the stress-test line shows how the answer moves if rivals bid harder. The roster cap drops the weakest rest-of-season player automatically.</p>
 </div></section>
 
-<section class="box"><h2>Re-run it <small>do this Tuesday after the chop, before bids lock</small></h2><div class="inner">
+<section class="box"><h2>Re-run it</h2><div class="inner">
   <pre class="cmd">cd ~/Desktop/"Fantasy 2026"/guillotine
 .venv/bin/python fetch.py && .venv/bin/python run.py
     # ~7 min on 8 threads, runs at low priority
 GSIM_THREADS=4 .venv/bin/python run.py   # fewer cores
 .venv/bin/python run.py --quick          # 1/8 of the sims, ~1 min</pre>
-  <p class="note">After the chop, the auction boxes switch from "if X is chopped" to the real roster on waivers and spend their sims on that one auction. Timings for this run: {', '.join(f'{k} {v}s' for k, v in r['timings'].items())}.</p>
+  <p class="note">Do this Tuesday after the chop, before bids lock. The auction boxes then switch from "if X is chopped" to the real roster on waivers and spend their sims on that one auction. Timings for this run: {', '.join(f'{k} {v}s' for k, v in r['timings'].items())}.</p>
 </div></section>
 </div>
 </div>

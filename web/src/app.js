@@ -58,8 +58,19 @@ async function load(raw) {
   say(`${league.name} loaded.`);
 }
 
+// One worker per core, less one for the page. Safari reports 4 cores for anything with fewer than 8 (an anti-tracking
+// cap) and every iPhone since 2017 has 6, so an iPhone counts as 6. ?cores=N sets the number of workers outright, to
+// time one count against another; the sheet's numbers are the same on any number of workers.
+function workerCount() {
+  const asked = Number(new URLSearchParams(location.search).get("cores"));
+  if (Number.isInteger(asked) && asked >= 1) return Math.min(16, asked);
+  const reported = navigator.hardwareConcurrency || 4;
+  const cores = /iPhone/.test(navigator.userAgent) ? Math.max(reported, 6) : reported;
+  return Math.max(1, Math.min(16, cores - 1));
+}
+
 function makePool() {
-  const n = Math.max(1, Math.min(16, (navigator.hardwareConcurrency || 4) - 1));
+  const n = workerCount();
   try {
     return new WorkerPool(n, () => new Worker(new URL("./worker.js", import.meta.url), { type: "module" }));
   } catch {
@@ -76,7 +87,7 @@ function progress(label, frac) {
 /* sheet-doc:begin */
 // The sheet is one self-contained file: render()'s markup (byte-identical to report.py's), sheet.css, and two additions
 // made here so report.js stays untouched: the key figures under the header, and a script that moves the calls to the
-// top, numbers the sections into parts, builds the section rail (a bar with a menu on narrow screens), links each call
+// top, builds the section rail with the sections grouped into parts (a bar with a menu on narrow screens), links each call
 // to the section behind it and steps through sections with j / k. report.py's markup asks for web fonts the web sheet
 // doesn't use; they're dropped so the sheet makes no requests.
 function keyFigures(r) {
@@ -156,8 +167,7 @@ function sheetScript() {
     }
     if (d.getElementById(id)) id += "-" + (i + 1);
     sec.id = id;
-    if (h && part) h.dataset.part = part;
-    return { id, label, extra, owner, part, n: String(i + 1).padStart(2, "0") };
+    return { id, label, extra, owner, part };
   });
 
   // the rail: who, key figures, sections by part
@@ -196,7 +206,7 @@ function sheetScript() {
     }
     const a = el("a");
     a.href = "#" + it.id;
-    a.append(el("span", "n", it.n), el("span", "t", it.label), el("span", "x", it.extra));
+    a.append(el("span", "t", it.label), el("span", "x", it.extra));
     grp.append(a);
     return a;
   });
@@ -224,7 +234,7 @@ function sheetScript() {
     if (!it) continue;
     const a = el("a", "k", name);
     a.href = "#" + it.id;
-    a.append(el("span", "to", "→ " + it.n));
+    a.append(el("span", "to", "→"));
     k.replaceWith(a);
   }
 
@@ -235,7 +245,7 @@ function sheetScript() {
     if (at >= 0) links[at].removeAttribute("aria-current");
     at = i;
     links[i].setAttribute("aria-current", "true");
-    cur.replaceChildren(el("span", "n", items[i].n), items[i].label);
+    cur.textContent = items[i].label;
     if (nav.scrollHeight > nav.clientHeight + 1 && getComputedStyle(nav).overflowY === "auto") {
       const a = links[i], top = a.offsetTop, bot = top + a.offsetHeight;
       if (top < nav.scrollTop + 48) nav.scrollTop = top - 48;
@@ -322,7 +332,6 @@ async function run(peek = false) {
   running = true;
   $("run").disabled = true;
   $("sheet-box").hidden = true;
-  const t0 = performance.now();
   let pool = null;
   try {
     pool = makePool(); // the workers load while the data downloads
@@ -348,8 +357,7 @@ async function run(peek = false) {
     if (cand) weekRun.peekSheet = sheet;
     else weekRun = { raw, rid, sheet, cand: peekCandidate(lg, r), peekSheet: null };
     showSheet(sheet, !!cand);
-    const secs = Math.round((performance.now() - t0) / 1000);
-    progress(`Done in ${secs} s on ${pool.size} ${pool.size === 1 ? "core" : "cores"}.`, 1);
+    progress(`Sims done in ${simTime(r)}.`, 1);
   } catch (e) {
     console.error(e);
     $("progress").hidden = true;
@@ -361,6 +369,9 @@ async function run(peek = false) {
     $("run").disabled = !$("team").value;
   }
 }
+
+/** "12.3 s on 5 cores": the sims alone, from the end of the download, which is the part the core count changes. */
+const simTime = (r) => `${r.timings.total.toFixed(1)} s on ${r.threads} ${r.threads === 1 ? "core" : "cores"}`;
 
 // The sheet gets the whole viewport and scrolls on its own, so its section rail and bar can stay pinned.
 function showSheet({ html, r }, peek) {
@@ -374,7 +385,7 @@ function showSheet({ html, r }, peek) {
   if (a.href.startsWith("blob:")) URL.revokeObjectURL(a.href);
   a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
   a.download = `chop-sheet-${r.season}-week-${r.week}${peek ? "-peek" : ""}.html`;
-  $("sheet-name").textContent = a.download;
+  $("run-stat").textContent = simTime(r);
   peeking = peek;
   const c = weekRun.cand;
   $("peek-box").hidden = !c;
